@@ -8,6 +8,7 @@
 #include "fy_globals.h"
 #include "storage_backend.h"
 #include "fy_module_diag.h"
+#include "fy_json_lite.h"
 #if defined(ENABLE_BLE_SCAN) && ENABLE_BLE_SCAN
 extern void bleScanStop();
 extern void bleScanStartCoex();
@@ -38,6 +39,52 @@ char gWebServerPass[64] = "";
 char gWebServerIP[24] = "";
 
 WebServer gWebServer(80);
+
+// (Re)build the file list: "fname|source|..." where source is "SD" or
+// "SPIF". Called at web start AND when /files is opened (throttled to once
+// per 3 s), so files created while the web server is up (new track files,
+// saves) show up without restarting the server.
+static void fyRefreshFileCache() {
+  // Format: "fname|source|fname|source|..." where source is "SD" or "SPIF"
+  gFileCache = "";
+  if (gStorageReady) {
+    yield();
+    File root = SD.open("/");
+    if (root) {
+      File f = root.openNextFile();
+      while (f) {
+        if (!f.isDirectory()) {
+          String fname = f.name();
+          if (fname.startsWith("flock_you-") || fname.startsWith("waypoints-") || fname.startsWith("track-") || fname.startsWith("/track-") || fname.startsWith("/waypoints-")) {
+            if (fname.startsWith("/")) fname = fname.substring(1);
+            gFileCache += fname;
+            gFileCache += "|SD|";
+          }
+        }
+        f = root.openNextFile();
+        yield();
+      }
+      root.close();
+    }
+  }
+  if (fySpiffsReady) {
+    fs::File root = SPIFFS.open("/");
+    if (root) {
+      fs::File f = root.openNextFile();
+      while (f) {
+        String fname = f.name();
+        if (fname.startsWith("flock_you-") || fname.startsWith("waypoints-") || fname.startsWith("track-") || fname.startsWith("/track-") || fname.startsWith("/waypoints-")) {
+          gFileCache += fname;
+          gFileCache += "|SPIF|";
+        }
+        f = root.openNextFile();
+        yield();
+      }
+      root.close();
+    }
+  }
+  gFileCacheMs = millis();
+}
 
 void fyWebServerStart() {
   if (gWebServerActive) return;
@@ -165,7 +212,8 @@ void fyWebServerStart() {
       client.print("</head><body><div class='container'><h1>flock-you files</h1><div class='card'>");
       bool found = false;
 
-      // Use cached file list (populated at web server start)
+      if (millis() - gFileCacheMs > 3000) fyRefreshFileCache();
+      // Use cached file list (refreshed above if older than 3 s)
       // Format: "fname|source|fname|source|..." where source is "SD" or "SPIF"
       if (gFileCache.length() > 0) {
         int idx = 0;
@@ -177,11 +225,11 @@ void fyWebServerStart() {
         }
         totalItems /= 2; // fname|source = 2 pipes per item
         // Bubble sort by name (simple approach for small lists)
-        String names[32];
-        String sources[32];
+        String names[64];
+        String sources[64];
         int count = 0;
         idx = 0;
-        while (idx < gFileCache.length() && count < 32) {
+        while (idx < gFileCache.length() && count < 64) {
           int pipe1 = gFileCache.indexOf('|', idx);
           if (pipe1 == -1) break;
           int pipe2 = gFileCache.indexOf('|', pipe1 + 1);
@@ -226,10 +274,10 @@ void fyWebServerStart() {
         File root = SD.open("/");
         if (root) {
           yield();
-          String names[32];
+          String names[64];
           int count = 0;
           File f = root.openNextFile();
-          while (f && count < 32) {
+          while (f && count < 64) {
             if (!f.isDirectory()) {
               String fname = f.name();
               if (fname.startsWith("flock_you-") || fname.startsWith("waypoints-") || fname.startsWith("track-") || fname.startsWith("/track-") || fname.startsWith("/waypoints-")) {
@@ -391,195 +439,69 @@ void fyWebServerStart() {
       return;
     }
 
-    // Find the JSON array: look for the first '[' after the metadata header.
-    // Waypoint/track files are JSON Lines (one object per line, no array),
-    // so fall back to the first object when there is no '['.
-    int arrStart = body.indexOf('[');
-    if (arrStart == -1) arrStart = 0;
-
-    // Extract column names from the first object in the array
-    // Find first '{"' after arrStart
-    int objStart = body.indexOf('{', arrStart);
-    if (objStart == -1) {
-      client.print("<div class='card'><p>No data objects found.</p></div>");
+    // Parse with fy_json_lite.h. Detection files are a metadata line + one
+    // JSON array; waypoint/track files are JSON Lines. Columns are the union
+    // of all rows' keys in first-seen order (nested objects flattened to
+    // "gps.lat" etc.), and each cell is looked up BY KEY, so a row that lacks
+    // a field gets an empty cell instead of shifting the rest left/right.
+    const char *buf = body.c_str();
+    size_t blen = body.length();
+    size_t start = 0;
+    if (name.startsWith("flock_you-") || name.startsWith("/flock_you-")) {
+      int arr = body.indexOf('[');
+      if (arr >= 0) start = (size_t)arr;  // skip {"v":1,"count":...} header
+    }
+    static const int kMaxCols = 40;
+    std::string cols[kMaxCols];
+    int nCols = 0;
+    size_t s0, e0, pos = start;
+    int rowsTotal = 0;
+    while (fyjson::nextObject(buf, blen, pos, s0, e0)) {
+      auto addCol = [&](const std::string &k, const std::string &) {
+        for (int i = 0; i < nCols; i++) if (cols[i] == k) return;
+        if (nCols < kMaxCols) cols[nCols++] = k;
+      };
+      fyjson::members(buf, s0, e0, addCol);
+      rowsTotal++;
+      pos = e0;
+      if ((rowsTotal & 15) == 0) yield();
+    }
+    if (rowsTotal == 0) {
+      client.print("<div class='card'><p>No records in this file yet.</p></div>");
       client.print("</div></body></html>");
       client.stop();
       return;
     }
-
-    // Find the end of the first object (matching '}')
-    int objEnd = objStart;
-    int depth = 0;
-    bool inStr = false;
-    bool escape = false;
-    for (int i = objStart; i < body.length(); i++) {
-      char c = body.charAt(i);
-      if (escape) { escape = false; continue; }
-      if (c == '\\' && inStr) { escape = true; continue; }
-      if (c == '"') { inStr = !inStr; continue; }
-      if (inStr) continue;
-      if (c == '{') depth++;
-      else if (c == '}') {
-        depth--;
-        if (depth == 0) {
-          objEnd = i;
-          break;
-        }
+    auto esc = [](const std::string &in) {
+      String o;
+      for (char c : in) {
+        if (c == '<') o += "&lt;";
+        else if (c == '>') o += "&gt;";
+        else if (c == '&') o += "&amp;";
+        else o += c;
       }
-    }
+      return o;
+    };
+    String row = "<table><thead><tr>";
+    for (int i = 0; i < nCols; i++) row += "<th>" + esc(cols[i]) + "</th>";
+    row += "</tr></thead><tbody>";
+    client.print(row);
 
-    // Extract first object as a String for column extraction
-    String firstObj = body.substring(objStart, objEnd + 1);
-
-    // Now iterate through all objects in the array
-    // Send table header — extract keys from first object
-    // FIXED: Properly distinguish keys from values by checking BOTH sides of quotes
-    client.print("<table><thead><tr>");
-    int p = 0;
-    depth = 0;
-    while (p < firstObj.length()) {
-      char c = firstObj.charAt(p);
-      if (c == '{') depth++;
-      else if (c == '}') depth--;
-
-      // At depth 1, we're inside an object. Check if this quote is a key or value.
-      if (depth == 1 && c == '"') {
-        // Find the matching closing quote
-        int quoteEnd = firstObj.indexOf('"', p + 1);
-        if (quoteEnd == -1) {
-          p++;
-          continue; // Malformed JSON, skip
-        }
-
-        String content = firstObj.substring(p + 1, quoteEnd);
-        bool isKey = false;
-
-        // Check what comes BEFORE the opening quote (skip whitespace)
-        int before = p - 1;
-        while (before >= 0 && (firstObj.charAt(before) == ' ' || firstObj.charAt(before) == '\t' || firstObj.charAt(before) == '\r' || firstObj.charAt(before) == '\n')) {
-          before--;
-        }
-        bool beforeIsColon = (before >= 0 && firstObj.charAt(before) == ':');
-        bool beforeIsBraceOrComma = (before >= 0 && (firstObj.charAt(before) == '{' || firstObj.charAt(before) == ','));
-
-        // Check what comes AFTER the closing quote (skip whitespace)
-        int after = quoteEnd + 1;
-        while (after < firstObj.length() && (firstObj.charAt(after) == ' ' || firstObj.charAt(after) == '\t' || firstObj.charAt(after) == '\r' || firstObj.charAt(after) == '\n')) {
-          after++;
-        }
-        bool afterIsColon = (after < firstObj.length() && firstObj.charAt(after) == ':');
-        bool afterIsBraceOrComma = (after < firstObj.length() && (firstObj.charAt(after) == '}' || firstObj.charAt(after) == ','));
-
-        // This is a KEY if: preceded by { or , (with only whitespace) AND followed by : (with only whitespace)
-        // This is a VALUE if: preceded by : (with only whitespace) AND followed by } or , (with only whitespace)
-        if (!beforeIsColon && afterIsColon && (beforeIsBraceOrComma || before < 0)) {
-          // Key pattern: [{(,]\\s*"key"\\s*:
-          isKey = true;
-        } else if (beforeIsColon && !afterIsColon && (afterIsBraceOrComma || after >= firstObj.length())) {
-          // Value pattern: \\s*:\\s*"value"\\s*[,}]]
-          isKey = false;
-        } else {
-          // Ambiguous or malformed - default to treating as value to avoid false headers
-          isKey = false;
-        }
-
-        if (isKey) {
-          client.print("<th>" + content + "</th>");
-        }
-
-        // Move position past this quoted string
-        p = quoteEnd + 1;
-        continue;
-      }
-      p++;
-      yield();
-    }
     int dataRows = 0;
-    int pos = objStart;
-    while (pos < body.length()) {
-      // Find the start of the next object
-      int oStart = body.indexOf('{', pos);
-      if (oStart == -1) break;
-      // Find the matching closing brace
-      int oEnd = oStart;
-      depth = 0;
-      inStr = false;
-      escape = false;
-      for (int i = oStart; i < body.length(); i++) {
-        char c = body.charAt(i);
-        if (escape) { escape = false; continue; }
-        if (c == '\\' && inStr) { escape = true; continue; }
-        if (c == '"') { inStr = !inStr; continue; }
-        if (inStr) continue;
-        if (c == '{') depth++;
-        else if (c == '}') {
-          depth--;
-          if (depth == 0) {
-            oEnd = i;
-            break;
-          }
-        }
-      }
-
-      // Extract this object and generate a row
-      String obj = body.substring(oStart, oEnd + 1);
-      client.print("<tr>");
-      p = 0;
-      depth = 0;
-      // Use simple depth tracking (no inStr) — at depth 1, " starts a value key
-      while (p < obj.length()) {
-        char c = obj.charAt(p);
-        if (c == '{') depth++;
-        else if (c == '}') depth--;
-        if (depth == 1 && c == '"') {
-          int q2 = obj.indexOf('"', p + 1);
-          if (q2 != -1) {
-            int colon = obj.indexOf(':', q2 + 1);
-            if (colon != -1) {
-              p = colon + 1;
-              while (p < obj.length() && (obj.charAt(p) == ' ' || obj.charAt(p) == '\t')) p++;
-              String val = "";
-              if (p < obj.length() && obj.charAt(p) == '"') {
-                int endQ = obj.indexOf('"', p + 1);
-                if (endQ != -1) {
-                  val = obj.substring(p + 1, endQ);
-                  // Unescape JSON strings
-                  int si = 0;
-                  while (si < val.length()) {
-                    if (val.charAt(si) == '\\' && si + 1 < val.length()) {
-                      char next = val.charAt(si + 1);
-                      if (next == '"' || next == '\\' || next == '/') {
-                        val.remove(si, 1);
-                      } else if (next == 'n') { val.setCharAt(si, '\n'); val.remove(si + 1, 1); }
-                      else if (next == 't') { val.setCharAt(si, '\t'); val.remove(si + 1, 1); }
-                      else if (next == 'r') { val.setCharAt(si, '\r'); val.remove(si + 1, 1); }
-                    }
-                    si++;
-                  }
-                }
-              } else {
-                int endVal = obj.indexOf(',', p);
-                if (endVal == -1) endVal = obj.indexOf('}', p);
-                if (endVal == -1) endVal = obj.indexOf(']', p);
-                if (endVal == -1) endVal = obj.length();
-                val = obj.substring(p, endVal);
-                val.trim();
-              }
-              // HTML-escape
-              val.replace("&", "&amp;");
-              val.replace("<", "&lt;");
-              val.replace(">", "&gt;");
-              client.print("<td>" + val + "</td>");
-              p = q2 + 1;
-              continue;
-            }
-          }
-        }
-        p++;
-      }
-      client.print("</tr>");
+    pos = start;
+    std::string vals[kMaxCols];
+    while (fyjson::nextObject(buf, blen, pos, s0, e0)) {
+      for (int i = 0; i < nCols; i++) vals[i].clear();
+      auto setVal = [&](const std::string &k, const std::string &v) {
+        for (int i = 0; i < nCols; i++) if (cols[i] == k) { vals[i] = v; return; }
+      };
+      fyjson::members(buf, s0, e0, setVal);
+      row = "<tr>";
+      for (int i = 0; i < nCols; i++) row += "<td>" + esc(vals[i]) + "</td>";
+      row += "</tr>";
+      client.print(row);
       dataRows++;
-      pos = oEnd + 1;
+      pos = e0;
       yield();
     }
     client.print("</tbody></table></div>");
@@ -630,46 +552,7 @@ void fyWebServerStart() {
     gWebServer.send(200, "application/json", json);
   });
 
-  // Populate file list cache before starting HTTP server, with source tag.
-  // Format: "fname|source|fname|source|..." where source is "SD" or "SPIF"
-  gFileCache = "";
-  if (gStorageReady) {
-    yield();
-    File root = SD.open("/");
-    if (root) {
-      File f = root.openNextFile();
-      while (f) {
-        if (!f.isDirectory()) {
-          String fname = f.name();
-          if (fname.startsWith("flock_you-") || fname.startsWith("waypoints-") || fname.startsWith("track-") || fname.startsWith("/track-") || fname.startsWith("/waypoints-")) {
-            if (fname.startsWith("/")) fname = fname.substring(1);
-            gFileCache += fname;
-            gFileCache += "|SD|";
-          }
-        }
-        f = root.openNextFile();
-        yield();
-      }
-      root.close();
-    }
-  }
-  if (fySpiffsReady) {
-    fs::File root = SPIFFS.open("/");
-    if (root) {
-      fs::File f = root.openNextFile();
-      while (f) {
-        String fname = f.name();
-        if (fname.startsWith("flock_you-") || fname.startsWith("waypoints-") || fname.startsWith("track-") || fname.startsWith("/track-") || fname.startsWith("/waypoints-")) {
-          gFileCache += fname;
-          gFileCache += "|SPIF|";
-        }
-        f = root.openNextFile();
-        yield();
-      }
-      root.close();
-    }
-  }
-  gFileCacheMs = millis();
+  fyRefreshFileCache();
 
   gWebServer.begin();
   delay(100);  // let TCP listener bind

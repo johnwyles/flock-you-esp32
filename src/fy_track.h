@@ -14,8 +14,10 @@
 // render it:
 //   {"seq":1,"event":"pt","utc":"2026-09-27T20:05:27Z","ts":1790539527,
 //    "up_ms":123456,"lat":30.073551,"lon":-97.842667,"alt":210.0,
-//    "spd_kmh":3.2,"sats":9,"hdop":0.8}
-// event = "pt" (interval point) or "mark" (manual Btn B press while tracking).
+//    "spd_kmh":3.2,"sats":9,"sats_view":14,"hdop":0.8}
+// event = "pt" (interval point), "mark" (manual Btn B press while tracking)
+// or "nofix" (interval tick without a fix: position fields are null, sats and
+// sats_view still recorded, so the file always shows the tracker was running).
 
 #ifndef FY_TRACK_H
 #define FY_TRACK_H
@@ -39,7 +41,8 @@ struct FyTrackSnapshot {
   uint32_t intervalS;
   uint32_t elapsedS;
   uint32_t points;
-  uint32_t skipped;
+  uint32_t skipped;       // ticks with no fix (written as "nofix" lines)
+  uint32_t writeErrors;   // lines that failed to write
   char     path[24];
   // live GPS
   bool     fix;

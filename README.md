@@ -170,8 +170,9 @@ Scans all 4 bands every 5 seconds.
 
 ### GPS Tracking Mode
 - **Hold Btn B for 1 s** to start (one beep); hold again to stop (two beeps). Also `CMD:TRACK`.
-- Logs one point every interval (default 5 s, `CMD:TRACK <seconds>` to change) to a new `/track-NNNN.json` per session, one JSON object per line: `seq, event, utc, ts, up_ms, lat, lon, alt, spd_kmh, sats, hdop`
-- With no fix, the tick is skipped and counted (tracking can be started indoors and begins recording once a fix arrives)
+- Writes one line every interval (default 5 s, `CMD:TRACK <seconds>` to change) to a new `/track-NNNN.json` per session, one JSON object per line: `seq, event, utc, ts, up_ms, lat, lon, alt, spd_kmh, sats, sats_view, hdop`
+- `event` is `pt` (point with a fix), `mark` (Btn B short press while tracking) or `nofix` (tick without a fix: position fields are `null`, satellite counts still recorded). The file therefore always shows that tracking ran, even if the GPS never got a fix.
+- While there is no fix, serial prints `[gps] no fix yet: X used / Y in view ...` every 30 s, and `[gps] FIX acquired` / `fix LOST` on changes
 - Each point is written and closed immediately, so a power cut loses at most one point
 - The tracking screen shows REC time, interval, file, points/skipped, fix status, position, speed and the last 6 points; each point is also printed as `[track] #N ...` on serial
 - A short Btn B press while tracking saves a normal waypoint **and** writes an `"event":"mark"` line into the track file
@@ -194,7 +195,8 @@ Scans all 4 bands every 5 seconds.
 - Display shows: WiFi status (connecting/connected/disconnected) + activity log
 - Endpoints:
   - `GET /` - status page
-  - `GET /files` - lists all detection/waypoint files sorted by date
+  - `GET /files` - lists detection, waypoint and track files (list refreshed on each visit, so files created while the server is running appear)
+  - `GET /table?name=...` - renders any of those files as a table; columns are the union of all records' keys (nested `gps`/`subghz` objects become `gps.lat` etc.) and every cell is matched to its column by key
   - `GET /file?name=flock_you-2026-05-01.json` - serves specific file
 
 ### Data Persistence

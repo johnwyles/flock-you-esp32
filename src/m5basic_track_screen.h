@@ -80,8 +80,9 @@ static void m5basicTracking(const FyTrackSnapshot &s, uint8_t ch, int detCount) 
     M5.Display.printf("every %-4lus", (unsigned long)s.intervalS);
 
     mbt_line(48, MB_LT_GREY, "File: %s", s.path);
-    mbt_line(60, MB_WHITE, "Points: %-6lu  Skipped (no fix): %lu",
-             (unsigned long)s.points, (unsigned long)s.skipped);
+    mbt_line(60, s.writeErrors ? MB_RED : MB_WHITE, "Fix pts: %-5lu No-fix: %-5lu%s",
+             (unsigned long)s.points, (unsigned long)s.skipped,
+             s.writeErrors ? "  WRITE ERR!" : "");
     if (s.fix) {
         mbt_line(72, MB_GREEN, "GPS: FIX  %u used / %u in view  HDOP %.1f",
                  s.satsUsed, s.satsInView, s.hdop);

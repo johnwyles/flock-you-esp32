@@ -162,8 +162,27 @@ static bool nmeaProcess(char *line) {
       if (n >= 10) gpsMaybeSetClock(f[1], f[9]);
     }
   } else if (strncmp(type, "GSV", 3) == 0 && n >= 4) {
+    // Each constellation (GP=GPS, BD/GB=BeiDou, GL=GLONASS, GA=Galileo,
+    // GQ=QZSS) sends its own GSV set; sum the latest count per talker
+    // (reports older than 5 s are dropped).
     gGpsStats.gsv++;
-    gGpsStats.satsInView = (uint8_t)atoi(f[3]);
+    static char talker[6][2];
+    static uint8_t inView[6];
+    static unsigned long seenMs[6];
+    int slot = -1, freeSlot = -1;
+    for (int i = 0; i < 6; i++) {
+      if (seenMs[i] && talker[i][0] == line[1] && talker[i][1] == line[2]) slot = i;
+      if (freeSlot < 0 && (!seenMs[i] || millis() - seenMs[i] > 5000)) freeSlot = i;
+    }
+    if (slot < 0) slot = freeSlot >= 0 ? freeSlot : 0;
+    talker[slot][0] = line[1];
+    talker[slot][1] = line[2];
+    inView[slot] = (uint8_t)atoi(f[3]);
+    seenMs[slot] = millis();
+    unsigned total = 0;
+    for (int i = 0; i < 6; i++)
+      if (seenMs[i] && millis() - seenMs[i] <= 5000) total += inView[i];
+    gGpsStats.satsInView = total > 255 ? 255 : (uint8_t)total;
   }
   return false;
 }
@@ -205,8 +224,31 @@ static bool gpsReadUart() {
   return (gGpsStats.gga != before) && gCurrentFix.valid;
 }
 
+// Every 30 s without a fix, say what the receiver is doing, so "no fix" can
+// be told apart from "no data" without running CMD:MODULES.
+static void gpsStatusTick() {
+  static unsigned long lastMs = 0;
+  static bool hadFix = false;
+  unsigned long now = millis();
+  if (gCurrentFix.valid != hadFix) {
+    hadFix = gCurrentFix.valid;
+    if (hadFix)
+      Serial.printf("[gps] FIX acquired: %.6f,%.6f sats=%u hdop=%.1f\r\n", gCurrentFix.lat,
+                    gCurrentFix.lon, gCurrentFix.satellites, gCurrentFix.hdop);
+    else
+      Serial.print("[gps] fix LOST\r\n");
+  }
+  if (gCurrentFix.valid || now - lastMs < 30000) return;
+  lastMs = now;
+  Serial.printf("[gps] no fix yet: %u used / %u in view, %lu NMEA ok (%lu bad), last %lds ago\r\n",
+                gCurrentFix.satellites, gGpsStats.satsInView, (unsigned long)gGpsStats.sentences,
+                (unsigned long)gGpsStats.checksumErrors,
+                gGpsStats.lastSentenceMs ? (long)((now - gGpsStats.lastSentenceMs) / 1000) : -1L);
+}
+
 bool gpsRead() {
   if (!gHasGPS) return false;
+  gpsStatusTick();
   if (gGpsStats.transport == GPS_TRANSPORT_UART) return gpsReadUart();
   if (gGpsStats.transport == GPS_TRANSPORT_I2C) return gpsReadI2C();
   return false;
