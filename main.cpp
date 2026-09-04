@@ -2330,6 +2330,14 @@ void setup()
       st.choice = StorageChoice::Spiffs;
       notify("Write FAILED.\n\nUsing SPIFFS.");
     }
+    else
+    {
+      notify("Using SD Card");
+    }
+  }
+  else if (gStorageReady && st.choice == StorageChoice::Spiffs)
+  {
+    notify("Using SPIFFS");
   }
 
   if (gStorageReady)
