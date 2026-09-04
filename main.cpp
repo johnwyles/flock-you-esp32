@@ -2652,10 +2652,10 @@ void loop()
     String cmd = Serial.readStringUntil('\n');
     cmd.trim();
     if (cmd.equalsIgnoreCase("CMD:FAKE")) {
-      uint8_t fakeMac[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
-      // Force-release channel lock so fake injections always count
+      static uint8_t fakeMac[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
+      // Rotate last byte so each fake is a new unique MAC
+      fakeMac[5]++;
       channelLockActive = false;
-      Serial.printf("[flockyou] Fake injected: fyDetCount=%d\n", fyDetCount);
       enqueueAlert(ALERT_OUI_ADDR2, fakeMac, -45, 1, nullptr, "test", 75);
       Serial.println("[flockyou] Fake detection injected");
     }
