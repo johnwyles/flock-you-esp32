@@ -1348,8 +1348,8 @@ static bool fyParseEnvelope(const char* hdr, size_t& outBytes, uint32_t& outCrc)
 }
 
 static bool fyValidateSessionFile(const char* path) {
-  if (!SPIFFS.exists(path)) return false;
-  File f = SPIFFS.open(path, "r");
+  if (!fyExists(path)) return false;
+  File f = fyOpen(path, "r");
   if (!f) return false;
   String hdr = f.readStringUntil('\n');
   if (hdr.length() < 10 || hdr[0] != '{') { f.close(); return false; }
@@ -1376,9 +1376,9 @@ static bool fyValidateSessionFile(const char* path) {
 }
 
 static bool fySpiffsCopy(const char* src, const char* dst) {
-  File s = SPIFFS.open(src, "r");
+  File s = fyOpen(src, "r");
   if (!s) return false;
-  File d = SPIFFS.open(dst, "w");
+  File d = fyOpen(dst, "w");
   if (!d) { s.close(); return false; }
   uint8_t buf[256];
   int n;
@@ -1392,9 +1392,9 @@ static bool fySpiffsCopy(const char* src, const char* dst) {
 }
 
 static bool fyAtomicPromote(const char* src, const char* dst) {
-  if (SPIFFS.rename(src, dst)) return true;
+  if (fyRename(src, dst)) return true;
   if (!fySpiffsCopy(src, dst)) return false;
-  SPIFFS.remove(src);
+  fyRemove(src);
   return true;
 }
 
@@ -1404,7 +1404,7 @@ static void fySaveSession() {
   size_t   payloadBytes = 0;
   uint32_t crc          = fyComputePayloadCRC(payloadBytes);
   int      savedCount   = fyDetCount;
-  File f = SPIFFS.open(FY_SESSION_TMP, "w");
+  File f = fyOpen(FY_SESSION_TMP, "w");
   if (!f) {
     dualPrintf("[flockyou] save failed: cannot open %s\n", FY_SESSION_TMP);
     return;
@@ -1432,7 +1432,7 @@ static void fySaveSession() {
     dualPrintf("[flockyou] save verify FAILED — old session preserved\n");
     return;
   }
-  SPIFFS.remove(FY_SESSION_FILE);
+  fyRemove(FY_SESSION_FILE);
   if (!fyAtomicPromote(FY_SESSION_TMP, FY_SESSION_FILE)) {
     dualPrintf("[flockyou] promote FAILED — data in %s for recovery\n", FY_SESSION_TMP);
     return;
@@ -1450,8 +1450,8 @@ static void fyPromotePrevSession() {
   if      (fyValidateSessionFile(FY_SESSION_FILE)) source = FY_SESSION_FILE;
   else if (fyValidateSessionFile(FY_SESSION_TMP))  source = FY_SESSION_TMP;
   if (!source) {
-    if (SPIFFS.exists(FY_SESSION_FILE)) SPIFFS.remove(FY_SESSION_FILE);
-    if (SPIFFS.exists(FY_SESSION_TMP))  SPIFFS.remove(FY_SESSION_TMP);
+    if (fyExists(FY_SESSION_FILE)) fyRemove(FY_SESSION_FILE);
+    if (fyExists(FY_SESSION_TMP))  fyRemove(FY_SESSION_TMP);
     dualPrintln("[flockyou] no valid prior session to promote");
     return;
   }
@@ -1459,9 +1459,9 @@ static void fyPromotePrevSession() {
     dualPrintf("[flockyou] failed to promote %s → %s\n", source, FY_PREV_FILE);
     return;
   }
-  if (SPIFFS.exists(FY_SESSION_FILE)) SPIFFS.remove(FY_SESSION_FILE);
-  if (SPIFFS.exists(FY_SESSION_TMP))  SPIFFS.remove(FY_SESSION_TMP);
-  File v = SPIFFS.open(FY_PREV_FILE, "r");
+  if (fyExists(FY_SESSION_FILE)) fyRemove(FY_SESSION_FILE);
+  if (fyExists(FY_SESSION_TMP))  fyRemove(FY_SESSION_TMP);
+  File v = fyOpen(FY_PREV_FILE, "r");
   size_t sz = v ? v.size() : 0;
   if (v) v.close();
   dualPrintf("[flockyou] prior session promoted from %s (%u bytes)\n",
