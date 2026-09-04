@@ -29,6 +29,11 @@ static void drawMenu(const char* title, const char* optA, const char* optB) {
 static bool waitSelect(const char* title, const char* optA, const char* optB,
                        bool defaultB) {
   drawMenu(title, optA, optB);
+  // Wait for any held button to be released first
+  while (M5.BtnA.isPressed() || M5.BtnB.isPressed()) {
+    M5.update();
+    delay(5);
+  }
   while (true) {
     M5.update();
     if (M5.BtnA.wasPressed()) return false;          // Left = optA = No
@@ -38,6 +43,11 @@ static bool waitSelect(const char* title, const char* optA, const char* optB,
 }
 
 static bool confirm(const char* msg) {
+  // Wait for any held button to be released first
+  while (M5.BtnA.isPressed() || M5.BtnB.isPressed()) {
+    M5.update();
+    delay(5);
+  }
   while (true) {
     M5.Display.fillScreen(MB_BLACK);
     M5.Display.setTextColor(MB_WHITE);
@@ -84,23 +94,20 @@ StorageResult storageBootMenu() {
   }
 
   r.sdMounted = true;
+
   if (!waitSelect("Storage?", "SPIFFS", "SD Card", false)) {
     notify("Using SPIFFS");
     return r;
   }
 
-  if (!waitSelect("Format SD?", "No", "Yes", false)) {
-    notify("Using SPIFFS");
-    return r;
-  }
-
-  if (!confirm("Are you sure?")) {
+  // SD card must be pre-formatted as FAT32 on a computer.
+  if (!confirm("Use SD Card?\nMust be FAT32")) {
     notify("Using SPIFFS");
     return r;
   }
 
   r.choice = StorageChoice::Sd;
-  r.sdFormatted = false;
+  r.sdFormatted = true;
   notify("Using SD Card");
   return r;
 }
