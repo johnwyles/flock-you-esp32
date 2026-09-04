@@ -353,11 +353,25 @@ static const char *ssid_exact_flock_cam_net = "Flock Camera net.";
 
 // Persistence
 #define MAX_DETECTIONS 200
-#define FY_SESSION_FILE "/session.json"
 #define FY_SESSION_TMP "/session.tmp"
-#define FY_PREV_FILE "/prev_session.json"
 #define AUTOSAVE_INTERVAL_MS 60000
 
+// Generate daily filename: /flock_you-YYYY-MM-DD.json
+// Uses millis-based date so it works without NTC/RTC.
+static void fyDailySessionPath(char *out, size_t len)
+{
+  uint32_t days = millis() / 86400000UL;
+  uint16_t year = 1970 + days / 365;
+  uint16_t doy = (days % 365);
+  uint8_t month = 1, day = doy + 1;
+  static const uint16_t mdays[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+  for (int i = 0; i < 12 && day > mdays[i]; i++)
+  {
+    day -= mdays[i];
+    month++;
+  }
+  snprintf(out, len, "/flock_you-%04u-%02u-%02u.json", year, month, day);
+}
 // Confidence weights, OUI byte tables, and sequential-MAC tracking moved to
 // fy_confidence.h (included further below, after AlertType/isFcnSsid are
 // defined — see the "CONFIDENCE SCORE COMPUTATION" section).
@@ -986,6 +1000,41 @@ static void dualPrintln(const char *str)
 #if defined(USE_M5BASIC)
   mb_logAdd(str);
 #endif
+}
+
+// Load existing daily file at boot so detections persist across power cycles
+static void fyLoadDailySession()
+{
+  if (!fySpiffsReady) return;
+  char dailyPath[32];
+  fyDailySessionPath(dailyPath, sizeof(dailyPath));
+  if (!fyExists(dailyPath)) return;
+  File f = fyOpen(dailyPath, "r");
+  if (!f) return;
+  String hdr = f.readStringUntil('\n');
+  if (hdr.length() < 10 || hdr[0] != '{') {
+    f.close();
+    return;
+  }
+  long count = 0, bytes = 0;
+  unsigned long crc = 0;
+  if (sscanf(hdr.c_str(), "{\"v\":1,\"count\":%ld,\"bytes\":%ld,\"crc\":\"0x%lX\"}", &count, &bytes, &crc) != 3) {
+    f.close();
+    return;
+  }
+  size_t remaining = bytes;
+  uint8_t buf[256];
+  while (remaining > 0) {
+    int n = f.read(buf, remaining < sizeof(buf) ? remaining : sizeof(buf));
+    if (n <= 0) break;
+    remaining -= n;
+  }
+  f.close();
+  if (count > 0) {
+    fyDetCount = (int)count;
+    fyLastSaveCount = fyDetCount;
+    dualPrintf("[flockyou] Loaded daily file: %s (count=%ld)\n", dailyPath, count);
+  }
 }
 
 static void ledFlash(unsigned ms)
@@ -1625,10 +1674,14 @@ static void fySaveSession()
   size_t payloadBytes = 0;
   uint32_t crc = fyComputePayloadCRC(payloadBytes);
   int savedCount = fyDetCount;
-  File f = fyOpen(FY_SESSION_TMP, "w");
+  char dailyPath[32];
+  fyDailySessionPath(dailyPath, sizeof(dailyPath));
+  char tmpPath[32];
+  snprintf(tmpPath, sizeof(tmpPath), "%s.tmp", dailyPath);
+  File f = fyOpen(tmpPath, "w");
   if (!f)
   {
-    dualPrintf("[flockyou] save failed: cannot open %s\n", FY_SESSION_TMP);
+    dualPrintf("[flockyou] save failed: cannot open %s\n", tmpPath);
     return;
   }
   f.printf("{\"v\":1,\"count\":%d,\"bytes\":%u,\"crc\":\"0x%08lX\"}\n",
@@ -1664,10 +1717,10 @@ static void fySaveSession()
     dualPrintf("[flockyou] save verify FAILED — old session preserved\n");
     return;
   }
-  fyRemove(FY_SESSION_FILE);
-  if (!fyAtomicPromote(FY_SESSION_TMP, FY_SESSION_FILE))
+  if (!fyRemove(dailyPath)) { /* ignore if not present */ }
+  if (!fyRename(tmpPath, dailyPath))
   {
-    dualPrintf("[flockyou] promote FAILED — data in %s for recovery\n", FY_SESSION_TMP);
+    dualPrintf("[flockyou] promote FAILED — data in %s for recovery\n", tmpPath);
     return;
   }
   fyLastSaveAt = millis();
@@ -1675,41 +1728,6 @@ static void fySaveSession()
   fyDirty = false;
   dualPrintf("[flockyou] session saved: %d det, %u bytes, crc=0x%08lX\n",
              savedCount, (unsigned)payloadBytes, (unsigned long)crc);
-}
-
-static void fyPromotePrevSession()
-{
-  if (!fySpiffsReady)
-    return;
-  const char *source = nullptr;
-  if (fyValidateSessionFile(FY_SESSION_FILE))
-    source = FY_SESSION_FILE;
-  else if (fyValidateSessionFile(FY_SESSION_TMP))
-    source = FY_SESSION_TMP;
-  if (!source)
-  {
-    if (fyExists(FY_SESSION_FILE))
-      fyRemove(FY_SESSION_FILE);
-    if (fyExists(FY_SESSION_TMP))
-      fyRemove(FY_SESSION_TMP);
-    dualPrintln("[flockyou] no valid prior session to promote");
-    return;
-  }
-  if (!fySpiffsCopy(source, FY_PREV_FILE))
-  {
-    dualPrintf("[flockyou] failed to promote %s → %s\n", source, FY_PREV_FILE);
-    return;
-  }
-  if (fyExists(FY_SESSION_FILE))
-    fyRemove(FY_SESSION_FILE);
-  if (fyExists(FY_SESSION_TMP))
-    fyRemove(FY_SESSION_TMP);
-  File v = fyOpen(FY_PREV_FILE, "r");
-  size_t sz = v ? v.size() : 0;
-  if (v)
-    v.close();
-  dualPrintf("[flockyou] prior session promoted from %s (%u bytes)\n",
-             source, (unsigned)sz);
 }
 
 // ============================================================
@@ -2318,6 +2336,7 @@ void setup()
   {
     dualPrintln("[flockyou] storage init FAILED — running without persistence");
   }
+  fyLoadDailySession();
 
   if (st.choice == StorageChoice::Sd && gStorageReady)
   {
@@ -2348,7 +2367,6 @@ void setup()
     {
       dualPrintln("[flockyou] SD verified writable");
     }
-    fyPromotePrevSession();
   }
   esp_log_level_set("SPIFFS", ESP_LOG_WARN);
 
