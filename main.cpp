@@ -1996,11 +1996,25 @@ void setup() {
 // M5Stack Basic/Core2: M5Unified fully inits inside m5basicInit().
 #if defined(USE_M5BASIC)
   m5basicInit();
-  // Immediately replace the splash with the scanning screen.  SPIFFS/BLE/WiFi
-  // init below can take a while (or, on some StickC Plus SE / Basic units,
-  // stall) — drawing the real UI *now* means the display never appears
-  // "stuck at Init..." even if a later step is slow.  It gets redrawn with
-  // real data once init finishes (see bottom of setup()).
+#endif
+
+#if defined(USE_M5BASIC)
+  // Storage selection MUST happen before the scanning screen is drawn,
+  // otherwise the user sees the scanning UI flash first.
+  StorageResult st = storageBootMenu();
+  if (!fyInitStorage(st)) {
+    dualPrintln("[flockyou] storage init FAILED — running without persistence");
+  }
+  if (gStorageReady) {
+    fySpiffsReady = true;
+    dualPrintf("[flockyou] storage ready: %s\n", fyStorageLabel());
+    if (st.choice == StorageChoice::Sd && st.sdMounted) {
+      if (st.sdFormatted) dualPrintln("[flockyou] SD formatted");
+    }
+    fyPromotePrevSession();
+  }
+  esp_log_level_set("SPIFFS", ESP_LOG_WARN);
+
   m5basicScanning(currentChannel, channelModeName(), 0,
                   millis(), false,
                   (int)FY_OUI_HIGH_COUNT, (int)FY_OUI_MFR_COUNT);
@@ -2056,19 +2070,9 @@ void setup() {
   // The error is cosmetic — SPIFFS.begin(true) handles it silently after this.
   esp_log_level_set("SPIFFS", ESP_LOG_NONE);
 
-  // Storage selection menu / unified backend init
-  StorageResult st = storageBootMenu();
-  if (!fyInitStorage(st)) {
-    dualPrintln("[flockyou] storage init FAILED — running without persistence");
-  }
-  if (gStorageReady) {
-    fySpiffsReady = true;
-    dualPrintf("[flockyou] storage ready: %s\n", fyStorageLabel());
-    if (st.choice == StorageChoice::Sd && st.sdMounted) {
-      if (st.sdFormatted) dualPrintln("[flockyou] SD formatted");
-    }
-    fyPromotePrevSession();
-  }
+  // Storage selection moved into USE_M5BASIC block above so it appears
+  // before the scanning screen.
+
   esp_log_level_set("SPIFFS", ESP_LOG_WARN);
 
   // ------------------------------------------------------------------
