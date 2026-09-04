@@ -1703,7 +1703,7 @@ static void fySaveSession()
                (unsigned)wrote, (unsigned)payloadBytes);
     return;
   }
-  if (!fyValidateSessionFile(FY_SESSION_TMP))
+  if (!fyValidateSessionFile(tmpPath))
   {
     dualPrintf("[flockyou] save verify FAILED — old session preserved\n");
     return;

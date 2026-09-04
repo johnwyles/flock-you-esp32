@@ -10,7 +10,7 @@ File fyOpen(const char *path, const char *mode)
   if (gStorageChoice == StorageChoice::Sd && gStorageReady)
   {
     String sdPath = path;
-  if (sdPath.startsWith("/")) sdPath.remove(0,1);
+    if (sdPath.startsWith("/")) sdPath.remove(0,1);
     return SD.open(sdPath.c_str(), mode);
   }
   return SPIFFS.open(path, mode);
@@ -21,7 +21,7 @@ bool fyExists(const char *path)
   if (gStorageChoice == StorageChoice::Sd && gStorageReady)
   {
     String sdPath = path;
-  if (sdPath.startsWith("/")) sdPath.remove(0,1);
+    if (sdPath.startsWith("/")) sdPath.remove(0,1);
     return SD.exists(sdPath);
   }
   return SPIFFS.exists(path);
@@ -32,7 +32,7 @@ bool fyRemove(const char *path)
   if (gStorageChoice == StorageChoice::Sd && gStorageReady)
   {
     String sdPath = path;
-  if (sdPath.startsWith("/")) sdPath.remove(0,1);
+    if (sdPath.startsWith("/")) sdPath.remove(0,1);
     return SD.remove(sdPath);
   }
   return SPIFFS.remove(path);
