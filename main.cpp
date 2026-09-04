@@ -2653,6 +2653,8 @@ void loop()
     cmd.trim();
     if (cmd.equalsIgnoreCase("CMD:FAKE")) {
       uint8_t fakeMac[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
+      // Force-release channel lock so fake injections always count
+      channelLockActive = false;
       Serial.printf("[flockyou] Fake injected: fyDetCount=%d\n", fyDetCount);
       enqueueAlert(ALERT_OUI_ADDR2, fakeMac, -45, 1, nullptr, "test", 75);
       Serial.println("[flockyou] Fake detection injected");
