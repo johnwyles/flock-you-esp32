@@ -1656,6 +1656,56 @@ static bool fyAtomicPromote(const char *src, const char *dst)
   return true;
 }
 
+// Scan storage for existing flock_you-*.json files and return next sequence
+static uint16_t fyFindNextBootCounter()
+{
+  uint16_t maxSeq = 0;
+#if defined(USE_M5BASIC) && defined(USE_SDCARD)
+  if (gStorageChoice == StorageChoice::Sd && gStorageReady)
+  {
+    File root = SD.open("/");
+    if (root)
+    {
+      File f = root.openNextFile();
+      while (f)
+      {
+        if (!f.isDirectory())
+        {
+          String name = f.name();
+          if (name.startsWith("flock_you-") && name.endsWith(".json"))
+          {
+            uint32_t seq = 0;
+            sscanf(name.c_str(), "flock_you-%u.json", &seq);
+            if (seq > maxSeq) maxSeq = seq;
+          }
+        }
+        f = root.openNextFile();
+      }
+    }
+  }
+#endif
+  if (gStorageChoice == StorageChoice::Spiffs && fySpiffsReady)
+  {
+    fs::File f = SPIFFS.open("/");
+    if (f)
+    {
+      fs::File entry = f.openNextFile();
+      while (entry)
+      {
+        String name = entry.name();
+        if (name.startsWith("flock_you-") && name.endsWith(".json"))
+        {
+          uint32_t seq = 0;
+          sscanf(name.c_str(), "flock_you-%u.json", &seq);
+          if (seq > maxSeq) maxSeq = seq;
+        }
+        entry = f.openNextFile();
+      }
+    }
+  }
+  return maxSeq + 1;
+}
+
 static void fySaveSession()
 {
   if (!fySpiffsReady)
@@ -2330,7 +2380,7 @@ void setup()
     dualPrintln("[flockyou] storage init FAILED — running without persistence");
   }
   fyLoadDailySession();
-  gBootCounter++;
+  gBootCounter = fyFindNextBootCounter();
 
   if (st.choice == StorageChoice::Sd && gStorageReady)
   {
