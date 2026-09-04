@@ -353,7 +353,7 @@ static const char *ssid_exact_flock_cam_net = "Flock Camera net.";
 
 // Persistence
 #define MAX_DETECTIONS 200
-#define FY_SESSION_TMP "/session.tmp"
+#define FY_SESSION_TMP "session.tmp"
 #define AUTOSAVE_INTERVAL_MS 60000
 
 // Generate daily filename: /flock_you-YYYY-MM-DD.json
@@ -361,7 +361,7 @@ static const char *ssid_exact_flock_cam_net = "Flock Camera net.";
 static uint16_t gBootCounter = 0;
 static void fyDailySessionPath(char *out, size_t len)
 {
-  snprintf(out, len, "/flock_you-%04u.json", gBootCounter);
+  snprintf(out, len, "flock_you-%04u.json", gBootCounter);
 }
 // Confidence weights, OUI byte tables, and sequential-MAC tracking moved to
 // fy_confidence.h (included further below, after AlertType/isFcnSsid are
