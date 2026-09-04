@@ -2005,11 +2005,23 @@ void setup() {
   if (!fyInitStorage(st)) {
     dualPrintln("[flockyou] storage init FAILED — running without persistence");
   }
+
+  if (st.choice == StorageChoice::Sd && gStorageReady) {
+    if (!fyTestSdWrite()) {
+      dualPrintln("[flockyou] SD write test failed — card may not be FAT32.");
+      dualPrintln("[flockyou] Falling back to SPIFFS.");
+      // Fall back to SPIFFS
+      gStorageChoice = StorageChoice::Spiffs;
+      gStorageReady = SPIFFS.begin(true);
+      st.choice = StorageChoice::Spiffs;
+    }
+  }
+
   if (gStorageReady) {
     fySpiffsReady = true;
     dualPrintf("[flockyou] storage ready: %s\n", fyStorageLabel());
     if (st.choice == StorageChoice::Sd && st.sdMounted) {
-      if (st.sdFormatted) dualPrintln("[flockyou] SD formatted");
+      dualPrintln("[flockyou] SD verified writable");
     }
     fyPromotePrevSession();
   }

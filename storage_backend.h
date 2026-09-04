@@ -14,4 +14,5 @@ bool fyExists(const char* path);
 bool fyRemove(const char* path);
 bool fyRename(const char* src, const char* dst);
 bool fyInitStorage(StorageResult res);
+bool fyTestSdWrite(); // test write on SD; returns true if writable
 const char* fyStorageLabel();

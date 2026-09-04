@@ -53,3 +53,15 @@ const char* fyStorageLabel() {
   if (gStorageChoice == StorageChoice::Sd && gStorageReady) return "SD";
   return "SPIFFS";
 }
+
+bool fyTestSdWrite() {
+  if (gStorageChoice != StorageChoice::Sd) return false;
+  String testPath = "/sd/.fw_test";
+  File f = SD.open(testPath, FILE_WRITE);
+  if (!f) return false;
+  f.write((const uint8_t*)"TEST", 4);
+  f.close();
+  if (!SD.exists(testPath)) return false;
+  if (!SD.remove(testPath)) return false;
+  return true;
+}

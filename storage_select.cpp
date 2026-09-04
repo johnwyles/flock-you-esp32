@@ -107,7 +107,6 @@ StorageResult storageBootMenu() {
   }
 
   r.choice = StorageChoice::Sd;
-  r.sdFormatted = true;
   notify("Using SD Card");
   return r;
 }
