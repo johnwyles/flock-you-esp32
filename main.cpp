@@ -358,19 +358,10 @@ static const char *ssid_exact_flock_cam_net = "Flock Camera net.";
 
 // Generate daily filename: /flock_you-YYYY-MM-DD.json
 // Uses millis-based date so it works without NTC/RTC.
+static uint16_t gBootCounter = 0;
 static void fyDailySessionPath(char *out, size_t len)
 {
-  uint32_t days = millis() / 86400000UL;
-  uint16_t year = 1970 + days / 365;
-  uint16_t doy = (days % 365);
-  uint8_t month = 1, day = doy + 1;
-  static const uint16_t mdays[] = {31,28,31,30,31,30,31,31,30,31,30,31};
-  for (int i = 0; i < 12 && day > mdays[i]; i++)
-  {
-    day -= mdays[i];
-    month++;
-  }
-  snprintf(out, len, "/flock_you-%04u-%02u-%02u.json", year, month, day);
+  snprintf(out, len, "/flock_you-%04u.json", gBootCounter);
 }
 // Confidence weights, OUI byte tables, and sequential-MAC tracking moved to
 // fy_confidence.h (included further below, after AlertType/isFcnSsid are
@@ -2337,6 +2328,7 @@ void setup()
     dualPrintln("[flockyou] storage init FAILED — running without persistence");
   }
   fyLoadDailySession();
+  gBootCounter++;
 
   if (st.choice == StorageChoice::Sd && gStorageReady)
   {
