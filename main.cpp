@@ -1449,6 +1449,7 @@ static int fyAddDetection(const char *mac, const char *method,
   else
     d.ssid[0] = '\0';
   fyDetCount++;
+  Serial.printf("[flockyou] enqueueAlert: detCount=%d\n", fyDetCount);
   fyDirty = true;
   if (outChirpWorthy)
     *outChirpWorthy = true;
@@ -2652,6 +2653,7 @@ void loop()
     cmd.trim();
     if (cmd.equalsIgnoreCase("CMD:FAKE")) {
       uint8_t fakeMac[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
+      Serial.printf("[flockyou] Fake injected: fyDetCount=%d\n", fyDetCount);
       enqueueAlert(ALERT_OUI_ADDR2, fakeMac, -45, 1, nullptr, "test", 75);
       Serial.println("[flockyou] Fake detection injected");
     }
