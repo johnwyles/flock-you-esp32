@@ -1669,6 +1669,8 @@ static void fySaveSession()
   fyDailySessionPath(dailyPath, sizeof(dailyPath));
   char tmpPath[32];
   snprintf(tmpPath, sizeof(tmpPath), "%s.tmp", dailyPath);
+  dualPrintf("[flockyou] save debug: choice=%d spiffsReady=%d sdReady=%d path=%s\n",
+             (int)gStorageChoice, (int)fySpiffsReady, (int)gStorageReady, tmpPath);
   File f = fyOpen(tmpPath, "w");
   if (!f)
   {
