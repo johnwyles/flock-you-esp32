@@ -14,3 +14,4 @@ struct StorageResult {
 };
 
 StorageResult storageBootMenu();
+void notify(const char* msg);

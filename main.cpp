@@ -2010,10 +2010,10 @@ void setup() {
     if (!fyTestSdWrite()) {
       dualPrintln("[flockyou] SD write test failed — card may not be FAT32.");
       dualPrintln("[flockyou] Falling back to SPIFFS.");
-      // Fall back to SPIFFS
       gStorageChoice = StorageChoice::Spiffs;
       gStorageReady = SPIFFS.begin(true);
       st.choice = StorageChoice::Spiffs;
+      notify("Write FAILED.\nUsing SPIFFS.");
     }
   }
 

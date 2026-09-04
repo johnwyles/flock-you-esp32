@@ -66,7 +66,7 @@ static bool confirm(const char* msg) {
   }
 }
 
-static void notify(const char* msg) {
+void notify(const char* msg) {
   M5.Display.fillScreen(MB_BLACK);
   M5.Display.setTextColor(MB_GREEN);
   M5.Display.setTextSize(2);
@@ -100,13 +100,11 @@ StorageResult storageBootMenu() {
     return r;
   }
 
-  // SD card must be pre-formatted as FAT32 on a computer.
-  if (!confirm("Use SD Card?\nMust be FAT32")) {
+  if (!confirm("Use SD card for\nstorage?\nMust be FAT32.")) {
     notify("Using SPIFFS");
     return r;
   }
 
   r.choice = StorageChoice::Sd;
-  notify("Using SD Card");
   return r;
 }
