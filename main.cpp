@@ -26,41 +26,40 @@
 #include <string.h>
 #include <SPIFFS.h>
 #include "esp_log.h"
-#include "fy_detect.h"   // PR#39: detection patterns + pure matching functions
+#include "fy_detect.h" // PR#39: detection patterns + pure matching functions
 
 // M5Stack Core2 For AWS has the same 320×240 ILI9342C display and M5Unified
 // button/speaker API as the M5Stack Basic. Map USE_M5CORE2_AWS → USE_M5BASIC at
 // compile time so all existing display guards work transparently.
 #if defined(USE_M5CORE2_AWS) && !defined(USE_M5BASIC)
-  #define USE_M5BASIC 1
+#define USE_M5BASIC 1
 #endif
 
 #if defined(ENABLE_BLE_SCAN) && ENABLE_BLE_SCAN
-  #include <NimBLEDevice.h>
-  #include <NimBLEScan.h>
-  #include <NimBLEAdvertisedDevice.h>
-  // NimBLE-Arduino 2.x (required for ESP32-C5, h2zero/NimBLE-Arduino@^2.1.0)
-  // renamed NimBLEAdvertisedDeviceCallbacks -> NimBLEScanCallbacks and
-  // NimBLEScan::setAdvertisedDeviceCallbacks() -> setScanCallbacks(), and the
-  // onResult() device pointer became `const`.  NIMBLE_CPP_VERSION_MAJOR is
-  // only defined starting in 2.x (via NimBLECppVersion.h, pulled in by
-  // NimBLEDevice.h) so its absence reliably signals the 1.x API.
-  #if defined(NIMBLE_CPP_VERSION_MAJOR) && (NIMBLE_CPP_VERSION_MAJOR >= 2)
-    #define FY_NIMBLE_V2 1
-  #else
-    #define FY_NIMBLE_V2 0
-  #endif
+#include <NimBLEDevice.h>
+#include <NimBLEScan.h>
+#include <NimBLEAdvertisedDevice.h>
+// NimBLE-Arduino 2.x (required for ESP32-C5, h2zero/NimBLE-Arduino@^2.1.0)
+// renamed NimBLEAdvertisedDeviceCallbacks -> NimBLEScanCallbacks and
+// NimBLEScan::setAdvertisedDeviceCallbacks() -> setScanCallbacks(), and the
+// onResult() device pointer became `const`.  NIMBLE_CPP_VERSION_MAJOR is
+// only defined starting in 2.x (via NimBLECppVersion.h, pulled in by
+// NimBLEDevice.h) so its absence reliably signals the 1.x API.
+#if defined(NIMBLE_CPP_VERSION_MAJOR) && (NIMBLE_CPP_VERSION_MAJOR >= 2)
+#define FY_NIMBLE_V2 1
+#else
+#define FY_NIMBLE_V2 0
 #endif
-
+#endif
 
 // T-Dongle C5 TFT display + RGB LED
 #if defined(USE_C5_DISPLAY) && USE_C5_DISPLAY
-  #include "c5_display.h"
+#include "c5_display.h"
 #endif
 
 // M5Stack Basic Core v2.7 / Core2 For AWS — ILI9342C 320×240 IPS display
 #if defined(USE_M5BASIC)
-  #include "m5basic_display.h"
+#include "m5basic_display.h"
 #endif
 
 // Storage abstraction: unified SD/SPIFFS selection menu + file API
@@ -69,7 +68,7 @@
 
 // M5StickC Plus SE — ST7789v2 1.14" display (240×135 landscape)
 #if defined(USE_M5STICKC_PLUS_SE)
-  #include "m5stickc_display.h"
+#include "m5stickc_display.h"
 #endif
 
 // M5Atom LED support — GPIO27 SK6812, GPIO39 button
@@ -89,21 +88,21 @@
 // its own explicit ledMatrixBootSequence() call in setup() instead (search
 // USE_M5ATOM_ECHO there) so its buzzer init path is left undisturbed.
 #if defined(USE_M5ATOM_LITE) || defined(USE_M5ATOM_VOICE)
-  #define USE_M5ATOM 1
+#define USE_M5ATOM 1
 #endif
 #if defined(USE_M5ATOM_LITE) || defined(USE_M5ATOM_VOICE) || defined(USE_M5ATOM_ECHO)
-  #define LED_PIN 27
-  #define NUM_LEDS 1
-  #define BUTTON_PIN 39
+#define LED_PIN 27
+#define NUM_LEDS 1
+#define BUTTON_PIN 39
 #endif
 #include "led_neopixel.h"
 
 #if defined(USE_M5ATOM_VOICES3R) || defined(USE_M5ATOM_VOICE) || defined(USE_M5BASIC)
-  #include <M5Unified.h>
+#include <M5Unified.h>
 #endif
 
 #if defined(USE_M5ATOM_VOICES3R)
-  #define BUTTON_PIN 41
+#define BUTTON_PIN 41
 #endif
 
 // ── Simple single-GPIO button support (Atom series + T-Dongle C5) ───────────
@@ -115,77 +114,76 @@
 // nothing.  This block wires up a simple debounced digitalRead() handler.
 #if defined(USE_M5ATOM_LITE) || defined(USE_M5ATOM_ECHO) || \
     defined(USE_M5ATOM_VOICE) || defined(USE_M5ATOM_VOICES3R)
-  #define HAS_SIMPLE_BUTTON 1
-  #define SIMPLE_BUTTON_PIN BUTTON_PIN
+#define HAS_SIMPLE_BUTTON 1
+#define SIMPLE_BUTTON_PIN BUTTON_PIN
 #elif defined(USE_C5_DISPLAY) && USE_C5_DISPLAY
-  #define HAS_SIMPLE_BUTTON 1
-  #define SIMPLE_BUTTON_PIN C5_BTN_PIN
+#define HAS_SIMPLE_BUTTON 1
+#define SIMPLE_BUTTON_PIN C5_BTN_PIN
 #endif
 
 // ============================================================
 // CONFIG
 // ============================================================
 
-
 #ifndef TESTING_MODE
-  #define TESTING_MODE 0
+#define TESTING_MODE 0
 #endif
 
 #if defined(USE_M5ATOM_ECHO)
-  #define BUZZER_PIN 25
-  #define USE_BUZZER 1
-  #define USE_M5_SPEAKER 0
-  #define USE_LED 0
-  #define LED_FLASH_MS 0
+#define BUZZER_PIN 25
+#define USE_BUZZER 1
+#define USE_M5_SPEAKER 0
+#define USE_LED 0
+#define LED_FLASH_MS 0
 #elif defined(USE_M5ATOM_LITE)
-  #define BUZZER_PIN 25
-  #define USE_BUZZER 0
-  #define USE_LED 1
-  #define USE_LED_MATRIX 1
-  #define LED_FLASH_MS 30000  // hold red 30 s after detection
+#define BUZZER_PIN 25
+#define USE_BUZZER 0
+#define USE_LED 1
+#define USE_LED_MATRIX 1
+#define LED_FLASH_MS 30000 // hold red 30 s after detection
 #elif defined(USE_M5ATOM_VOICES3R)
-  #define USE_BUZZER 0
-  #define USE_M5_SPEAKER 1
-  #define USE_LED 0
-  #define LED_FLASH_MS 0
+#define USE_BUZZER 0
+#define USE_M5_SPEAKER 1
+#define USE_LED 0
+#define LED_FLASH_MS 0
 #elif defined(USE_M5ATOM_VOICE)
-  #define USE_BUZZER 0
-  #define USE_M5_SPEAKER 1
-  #define USE_LED 1
-  #define USE_LED_MATRIX 1
-  #define LED_FLASH_MS 30000  // hold red 30 s after detection
+#define USE_BUZZER 0
+#define USE_M5_SPEAKER 1
+#define USE_LED 1
+#define USE_LED_MATRIX 1
+#define LED_FLASH_MS 30000 // hold red 30 s after detection
 #elif defined(USE_LILYGO_T_DONGLE_C5)
   // LILYGO T-Dongle C5 — ESP32-C5 RISC-V, dual-band WiFi 6 + BT5
   // ST7735S TFT (80×160) + WS2812B RGB LED via c5_display.h
-  #define USE_BUZZER     0
-  #define USE_LED        0
-  #define USE_C5_DISPLAY 1
-  #define LED_FLASH_MS   30000  // hold red 30 s after detection
+#define USE_BUZZER 0
+#define USE_LED 0
+#define USE_C5_DISPLAY 1
+#define LED_FLASH_MS 30000 // hold red 30 s after detection
 #elif defined(USE_M5BASIC)
   // M5Stack Basic Core v2.7 — ILI9342C 320×240 IPS + 1W speaker + 3 buttons
   // Display handled via M5Unified in m5basic_display.h.
   // No NeoPixel — display replaces LED status indication entirely.
-  #define USE_BUZZER      0
-  #define USE_M5_SPEAKER  1
-  #define USE_LED         0
-  #define LED_FLASH_MS    0
-  // Note: USE_M5CORE2_AWS is aliased to USE_M5BASIC above — no separate block needed.
+#define USE_BUZZER 0
+#define USE_M5_SPEAKER 1
+#define USE_LED 0
+#define LED_FLASH_MS 0
+// Note: USE_M5CORE2_AWS is aliased to USE_M5BASIC above — no separate block needed.
 #elif defined(USE_M5STICKC_PLUS_SE)
   // M5StickC Plus SE — passive buzzer G2 (tone/noTone), no NeoPixel.
   // M5Unified speaker disabled (cfg.internal_spk=false) to prevent GPIO2 conflict.
   // Display via m5stickc_display.h (240×135 landscape ST7789v2).
-  #define BUZZER_PIN      2
-  #define USE_BUZZER      1
-  #define USE_M5_SPEAKER  0
-  #define USE_LED         0
-  #define LED_FLASH_MS    0
+#define BUZZER_PIN 2
+#define USE_BUZZER 1
+#define USE_M5_SPEAKER 0
+#define USE_LED 0
+#define LED_FLASH_MS 0
 #else
-  #define BUZZER_PIN 25
-  #define USE_BUZZER 1
-  #define LED_PIN 2
-  #define USE_LED 1
-  #define LED_ACTIVE_HIGH 1
-  #define LED_FLASH_MS 30000  // hold red 30 s after detection
+#define BUZZER_PIN 25
+#define USE_BUZZER 1
+#define LED_PIN 2
+#define USE_LED 1
+#define LED_ACTIVE_HIGH 1
+#define LED_FLASH_MS 30000 // hold red 30 s after detection
 #endif
 #include "led_gpio.h"
 
@@ -217,14 +215,13 @@
 // reliably brick boot on affected boards (ESP32 DevKit and M5Atom Echo —
 // see the guard on the Serial1.begin() call below), it defaults OFF.
 // Set to 1 only if you have verified on YOUR specific unit that it is safe.
-#define MIRROR_SERIAL    0
-#define MIRROR_TX_PIN    17
-#define MIRROR_BAUD      115200
+#define MIRROR_SERIAL 0
+#define MIRROR_TX_PIN 17
+#define MIRROR_BAUD 115200
 
-
-#define CHANNEL_MODE_FULL_HOP   0
-#define CHANNEL_MODE_CUSTOM     1
-#define CHANNEL_MODE_SINGLE     2
+#define CHANNEL_MODE_FULL_HOP 0
+#define CHANNEL_MODE_CUSTOM 1
+#define CHANNEL_MODE_SINGLE 2
 
 #define CHANNEL_MODE CHANNEL_MODE_CUSTOM
 // ── Dwell time + hop DIRECTION (August 2026 field-reliability fix) ─────────
@@ -264,18 +261,16 @@
 #define CHANNEL_DWELL_MS 100
 #define SINGLE_CHANNEL 1
 
-
 // ── 2.4 GHz channels — always scanned ──────────────────────────────────────
 // Flock primaries: 1, 6, 11.  "Flock Camera net." observed on ch.1 (2.4 GHz).
 // NOTE: order is intentionally DESCENDING (11, 6, 1) — see the
 // CHANNEL_DWELL_MS comment above for why. Do not "fix" this back to
 // ascending order without re-reading that comment.
-static const uint8_t customChannels[]   = {11, 6, 1};
-static const size_t  customChannelCount = sizeof(customChannels) / sizeof(customChannels[0]);
+static const uint8_t customChannels[] = {11, 6, 1};
+static const size_t customChannelCount = sizeof(customChannels) / sizeof(customChannels[0]);
 
-
-static const uint8_t fullHopChannels[]  = {1,2,3,4,5,6,7,8,9,10,11};
-static const size_t  fullHopChannelCount = sizeof(fullHopChannels) / sizeof(fullHopChannels[0]);
+static const uint8_t fullHopChannels[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+static const size_t fullHopChannelCount = sizeof(fullHopChannels) / sizeof(fullHopChannels[0]);
 
 // ── 5 GHz channel note ───────────────────────────────────────────────────────
 // Field observation (issue #43): "Flock Camera net." hotspot transmits on
@@ -302,22 +297,22 @@ static const size_t  fullHopChannelCount = sizeof(fullHopChannels) / sizeof(full
 // important for the Flask app so detections can be tagged by band.
 // channelFreqMhz() below returns the correct MHz for both ranges.
 #if defined(ESP32C5_DUALBAND) && ESP32C5_DUALBAND
-  static const uint8_t fiveGhzChannels[] = {149, 157};
-  static const size_t  fiveGhzChannelCount = 2;
+static const uint8_t fiveGhzChannels[] = {149, 157};
+static const size_t fiveGhzChannelCount = 2;
 #endif
 
-#define HEARTBEAT_MS    30000
-#define RSSI_MIN        -95
+#define HEARTBEAT_MS 30000
+#define RSSI_MIN -95
 #define ALERT_COOLDOWN_MS 5000
 
-#define REDISCOVER_MS          30000
-#define NEW_CHIRP_LO_HZ        2000
-#define NEW_CHIRP_HI_HZ        2800
-#define NEW_CHIRP_NOTE_MS      55
-#define NEW_CHIRP_GAP_MS       25
-#define HB_BEEP_HZ             1500
-#define HB_BEEP_NOTE_MS        70
-#define HB_BEEP_GAP_MS         70
+#define REDISCOVER_MS 30000
+#define NEW_CHIRP_LO_HZ 2000
+#define NEW_CHIRP_HI_HZ 2800
+#define NEW_CHIRP_NOTE_MS 55
+#define NEW_CHIRP_GAP_MS 25
+#define HB_BEEP_HZ 1500
+#define HB_BEEP_NOTE_MS 70
+#define HB_BEEP_GAP_MS 70
 
 // ui_task.h — decoupled UI/display FreeRTOS task (see file for full
 // rationale). Included here, right after the audio/heartbeat macros it
@@ -330,18 +325,18 @@ static const size_t  fullHopChannelCount = sizeof(fullHopChannels) / sizeof(full
 // to run.  It is ON by default now because "Flock Camera net." is our only
 // handle for locally-administered-MAC cameras (issue #43).
 #define ENABLE_SSID_MATCH 1
-#define CHECK_ADDR1 1   // dst/rx — catches Flock STAs receiving probe responses
-#define CHECK_ADDR3 1   // bssid fallback for randomised addr2  (was 0)
+#define CHECK_ADDR1 1 // dst/rx — catches Flock STAs receiving probe responses
+#define CHECK_ADDR3 1 // bssid fallback for randomised addr2  (was 0)
 
 // Full SSID keyword list.  Lower-case; matched case-insensitively.
 // "flock"          → bare deployed cameras, provisioning "Flock-XXXXXX"
 // "flock camera"   → issue-43 hotspot ("Flock Camera net.")
 // "flocksafety"    → variant brand string sometimes advertised
-static const char* target_ssid_keywords[] = {
-  "flock",          // matches "Flock", "Flock-XXXXXX", "FLOCK-XXXXXX", "Flock Camera net."
-  "flocksafety",
-  "penguin",        // internal Flock product codename
-  "pigvision"       // PigVision / Raven variant
+static const char *target_ssid_keywords[] = {
+    "flock", // matches "Flock", "Flock-XXXXXX", "FLOCK-XXXXXX", "Flock Camera net."
+    "flocksafety",
+    "penguin",  // internal Flock product codename
+    "pigvision" // PigVision / Raven variant
 };
 static const size_t SSID_KEYWORD_COUNT = sizeof(target_ssid_keywords) / sizeof(target_ssid_keywords[0]);
 
@@ -349,18 +344,18 @@ static const size_t SSID_KEYWORD_COUNT = sizeof(target_ssid_keywords) / sizeof(t
 // "Flock Camera net." is the issue-#43 pattern and gets a bigger boost
 // because it is highly specific and uses a locally-administered MAC that
 // will never match any IEEE OUI.
-static const char* ssid_exact_flock_cam_net = "Flock Camera net.";
+static const char *ssid_exact_flock_cam_net = "Flock Camera net.";
 
 #define STOP_ON_SSID_HIT 0
-#define STOP_ON_OUI_HIT  0
+#define STOP_ON_OUI_HIT 0
 #define PROCESS_MGMT_FRAMES 1
 #define PROCESS_DATA_FRAMES 1
 
 // Persistence
-#define MAX_DETECTIONS       200
-#define FY_SESSION_FILE      "/session.json"
-#define FY_SESSION_TMP       "/session.tmp"
-#define FY_PREV_FILE         "/prev_session.json"
+#define MAX_DETECTIONS 200
+#define FY_SESSION_FILE "/session.json"
+#define FY_SESSION_TMP "/session.tmp"
+#define FY_PREV_FILE "/prev_session.json"
 #define AUTOSAVE_INTERVAL_MS 60000
 
 // Confidence weights, OUI byte tables, and sequential-MAC tracking moved to
@@ -383,62 +378,83 @@ static const char* ssid_exact_flock_cam_net = "Flock Camera net.";
 
 #define ALERT_QUEUE_SIZE 32
 
-typedef enum : uint8_t {
-  ALERT_OUI_ADDR2       = 0,
-  ALERT_OUI_ADDR1       = 1,
-  ALERT_OUI_ADDR3       = 2,
-  ALERT_SSID            = 3,
-  ALERT_WILDCARD_PROBE  = 4,
+typedef enum : uint8_t
+{
+  ALERT_OUI_ADDR2 = 0,
+  ALERT_OUI_ADDR1 = 1,
+  ALERT_OUI_ADDR3 = 2,
+  ALERT_SSID = 3,
+  ALERT_WILDCARD_PROBE = 4,
   // Locally-administered MAC + Flock SSID (issue-#43 "Flock Camera net." class).
   // These cameras will never match any OUI — SSID is the only WiFi handle.
-  ALERT_LAA_SSID        = 5,
+  ALERT_LAA_SSID = 5,
   // PR#39: contract-manufacturer OUI (Liteon/USI) — lower confidence, no chirp alone.
   // Score CS_OUI_MFR=20 < CHIRP_MIN_CONFIDENCE=30 → logged but silent.
-  ALERT_OUI_MFR         = 6,
+  ALERT_OUI_MFR = 6,
   // PR#39: SoundThinking/ShotSpotter acoustic sensor co-deployed with Flock cameras.
   // Score CS_SOUNDTHINKING=35 ≥ CHIRP_MIN_CONFIDENCE → audible alert, "soundthinking" method.
-  ALERT_SOUNDTHINKING   = 7,
+  ALERT_SOUNDTHINKING = 7,
   // BLE-only Flock signal types — standalone alerts, no corroborating WiFi
   // frame required. See the note above this enum for why these exist.
-  ALERT_BLE_MFR_ID      = 8,   // BLE mfr-ID 0x09C8 (XUNTONG / Flock)
-  ALERT_BLE_RAVEN_UUID  = 9,   // Raven/Flock 128-bit BLE service UUID
-  ALERT_BLE_NAME        = 10,  // BLE device-name substring match
+  ALERT_BLE_MFR_ID = 8,     // BLE mfr-ID 0x09C8 (XUNTONG / Flock)
+  ALERT_BLE_RAVEN_UUID = 9, // Raven/Flock 128-bit BLE service UUID
+  ALERT_BLE_NAME = 10,      // BLE device-name substring match
 } AlertType;
 
-typedef struct {
+typedef struct
+{
   AlertType type;
-  uint8_t   mac[6];
-  int8_t    rssi;
-  uint8_t   channel;
-  char      ssid[33];
-  char      frameKind[12];
-  uint8_t   confidence;   // 0–100 computed in callback, emitted in JSON
+  uint8_t mac[6];
+  int8_t rssi;
+  uint8_t channel;
+  char ssid[33];
+  char frameKind[12];
+  uint8_t confidence; // 0–100 computed in callback, emitted in JSON
 } AlertEntry;
 
 static volatile AlertEntry alertQueue[ALERT_QUEUE_SIZE];
 static volatile size_t alertHead = 0;
 static volatile size_t alertTail = 0;
-static portMUX_TYPE    queueMux  = portMUX_INITIALIZER_UNLOCKED;
+static portMUX_TYPE queueMux = portMUX_INITIALIZER_UNLOCKED;
 
-static void IRAM_ATTR enqueueAlert(AlertType type, const uint8_t* mac, int8_t rssi,
-                                    uint8_t ch, const char* ssid, const char* kind,
-                                    uint8_t confidence) {
+static void IRAM_ATTR enqueueAlert(AlertType type, const uint8_t *mac, int8_t rssi,
+                                   uint8_t ch, const char *ssid, const char *kind,
+                                   uint8_t confidence)
+{
   portENTER_CRITICAL_ISR(&queueMux);
   size_t next = (alertHead + 1) % ALERT_QUEUE_SIZE;
-  if (next == alertTail) { portEXIT_CRITICAL_ISR(&queueMux); return; }
+  if (next == alertTail)
+  {
+    portEXIT_CRITICAL_ISR(&queueMux);
+    return;
+  }
 
-  AlertEntry* e = (AlertEntry*)&alertQueue[alertHead];
-  e->type       = type;
-  e->rssi       = rssi;
-  e->channel    = ch;
+  AlertEntry *e = (AlertEntry *)&alertQueue[alertHead];
+  e->type = type;
+  e->rssi = rssi;
+  e->channel = ch;
   e->confidence = confidence;
-  memcpy((void*)e->mac, mac, 6);
+  memcpy((void *)e->mac, mac, 6);
 
-  if (ssid) { strncpy((char*)e->ssid,      ssid, 32); ((char*)e->ssid)[32] = '\0'; }
-  else       { ((char*)e->ssid)[0] = '\0'; }
+  if (ssid)
+  {
+    strncpy((char *)e->ssid, ssid, 32);
+    ((char *)e->ssid)[32] = '\0';
+  }
+  else
+  {
+    ((char *)e->ssid)[0] = '\0';
+  }
 
-  if (kind) { strncpy((char*)e->frameKind, kind, 11); ((char*)e->frameKind)[11] = '\0'; }
-  else       { ((char*)e->frameKind)[0] = '\0'; }
+  if (kind)
+  {
+    strncpy((char *)e->frameKind, kind, 11);
+    ((char *)e->frameKind)[11] = '\0';
+  }
+  else
+  {
+    ((char *)e->frameKind)[0] = '\0';
+  }
 
   alertHead = next;
   portEXIT_CRITICAL_ISR(&queueMux);
@@ -467,11 +483,11 @@ static void IRAM_ATTR enqueueAlert(AlertType type, const uint8_t* mac, int8_t rs
 
 #if defined(ENABLE_BLE_SCAN) && ENABLE_BLE_SCAN
 
-#define BLE_SCAN_INTERVAL_MS   60000UL  // how often to run a BLE scan
-#define BLE_SCAN_DWELL_MS       5000UL  // how long the BLE scan runs
+#define BLE_SCAN_INTERVAL_MS 60000UL // how often to run a BLE scan
+#define BLE_SCAN_DWELL_MS 5000UL     // how long the BLE scan runs
 // PR#39 correction: 0x09C8 is the XUNTONG BT company ID per wgreenberg/flock-you.
 // Pre-PR#39 firmware used 0x05A7 (incorrect — that ID belongs to Assa Abloy).
-#define BLE_FLOCK_MFR_ID       0x09C8   // XUNTONG Technology Co., Ltd
+#define BLE_FLOCK_MFR_ID 0x09C8 // XUNTONG Technology Co., Ltd
 
 // Standalone BLE-only confidence tiers (fix: these previously never fired —
 // a BLE-only match only recorded a timestamp for later WiFi correlation and
@@ -482,33 +498,39 @@ static void IRAM_ATTR enqueueAlert(AlertType type, const uint8_t* mac, int8_t rs
 // fyProcessBLEAdvertisedDevice() below is compiled before fy_confidence.h is
 // #include-d later in this file (re-#define-ing an identical macro is legal).
 #define CS_BLE_MFR_ID_STANDALONE 45
-#define CS_BLE_UUID_STANDALONE   45
-#define CS_BLE_NAME_STANDALONE   35
+#define CS_BLE_UUID_STANDALONE 45
+#define CS_BLE_NAME_STANDALONE 35
 
 #if defined(BLE_SELF_TEST) && BLE_SELF_TEST
-static NimBLEAdvertising* g_pBLEAdv = nullptr;
+static NimBLEAdvertising *g_pBLEAdv = nullptr;
 #endif
 
 // Raven UUIDs are checked via fyCheckRavenUUIDFromStrings() from fy_detect.h
 // using full 128-bit UUID strings.  The old short-form defines are gone.
 
-static const char* ble_flock_names[] = {
-  "flock", "penguin", "pigvision", "fs ext battery",
-  "raven",  // Raven variant
-  nullptr
-};
+static const char *ble_flock_names[] = {
+    "flock", "penguin", "pigvision", "fs ext battery",
+    "raven", // Raven variant
+    nullptr};
 
-static volatile uint32_t g_bleFlockLastSeen = 0;  // millis() of last BLE Flock hit
-static volatile int8_t   g_bleFlockRssi     = -127;
-static unsigned long     g_bleNextScan      = 0;
-static NimBLEScan*       g_pBLEScan         = nullptr;
+static volatile uint32_t g_bleFlockLastSeen = 0; // millis() of last BLE Flock hit
+static volatile int8_t g_bleFlockRssi = -127;
+static unsigned long g_bleNextScan = 0;
+static NimBLEScan *g_pBLEScan = nullptr;
 
 // Case-insensitive substring search (BLE name is typically short)
-static bool bleNameContains(const char* name, const char* needle) {
-  if (!name || !needle || !*name || !*needle) return false;
+static bool bleNameContains(const char *name, const char *needle)
+{
+  if (!name || !needle || !*name || !*needle)
+    return false;
   // lowercase copy of name
-  char low[64]; size_t i = 0;
-  while (i < 63 && name[i]) { low[i] = (char)tolower((unsigned char)name[i]); i++; }
+  char low[64];
+  size_t i = 0;
+  while (i < 63 && name[i])
+  {
+    low[i] = (char)tolower((unsigned char)name[i]);
+    i++;
+  }
   low[i] = '\0';
   return strstr(low, needle) != nullptr;
 }
@@ -521,24 +543,28 @@ static bool bleNameContains(const char* name, const char* needle) {
 // pointer (the 1.x-native shape); the 2.x wrapper below const_casts its
 // `const` parameter away before calling in — safe, since the scan callback
 // never actually receives a truly-const object, only a const-qualified view.
-static void fyProcessBLEAdvertisedDevice(NimBLEAdvertisedDevice* adv) {
+static void fyProcessBLEAdvertisedDevice(NimBLEAdvertisedDevice *adv)
+{
 
-  if (!adv) return;
+  if (!adv)
+    return;
   int8_t rssi = (int8_t)adv->getRSSI();
-  bool      matched       = false;
-  AlertType bleAlertType  = ALERT_BLE_NAME;   // overwritten below once matched
-  uint8_t   bleConfidence = 0;
+  bool matched = false;
+  AlertType bleAlertType = ALERT_BLE_NAME; // overwritten below once matched
+  uint8_t bleConfidence = 0;
 
   // 1. Manufacturer ID check (Flock Safety BLE mfr-ID per Will Greenberg)
   {
     std::string mfr = adv->getManufacturerData();
-    if (mfr.size() >= 2) {
-      const uint8_t* m = (const uint8_t*)mfr.data();
+    if (mfr.size() >= 2)
+    {
+      const uint8_t *m = (const uint8_t *)mfr.data();
       // BLE mfr data is LE: low byte first
       uint16_t mfrId = (uint16_t)m[0] | ((uint16_t)m[1] << 8);
-      if (mfrId == BLE_FLOCK_MFR_ID) {
-        matched       = true;
-        bleAlertType  = ALERT_BLE_MFR_ID;
+      if (mfrId == BLE_FLOCK_MFR_ID)
+      {
+        matched = true;
+        bleAlertType = ALERT_BLE_MFR_ID;
         bleConfidence = CS_BLE_MFR_ID_STANDALONE;
       }
     }
@@ -547,19 +573,22 @@ static void fyProcessBLEAdvertisedDevice(NimBLEAdvertisedDevice* adv) {
   // 2. Raven / Flock BLE service UUID check — full 128-bit UUIDs (GainSec/PR#39).
   // Iterates the device's advertised service list and delegates to fy_detect.h's
   // hardware-independent fyCheckRavenUUIDFromStrings() for the actual comparison.
-  if (!matched && adv->haveServiceUUID()) {
+  if (!matched && adv->haveServiceUUID())
+  {
     int nsvc = adv->getServiceUUIDCount();
-    const char* strs[16];
+    const char *strs[16];
     std::string bufs[16];
     int n = (nsvc < 16) ? nsvc : 16;
-    for (int si = 0; si < n; si++) {
+    for (int si = 0; si < n; si++)
+    {
       bufs[si] = adv->getServiceUUID(si).toString();
       strs[si] = bufs[si].c_str();
     }
     char matchedUUID[41] = {0};
-    if (fyCheckRavenUUIDFromStrings(strs, n, matchedUUID)) {
-      matched       = true;
-      bleAlertType  = ALERT_BLE_RAVEN_UUID;
+    if (fyCheckRavenUUIDFromStrings(strs, n, matchedUUID))
+    {
+      matched = true;
+      bleAlertType = ALERT_BLE_RAVEN_UUID;
       bleConfidence = CS_BLE_UUID_STANDALONE;
       // Log which UUID matched (matchedUUID is populated by the helper)
       (void)matchedUUID;
@@ -567,13 +596,17 @@ static void fyProcessBLEAdvertisedDevice(NimBLEAdvertisedDevice* adv) {
   }
 
   // 3. Device name match
-  if (!matched) {
+  if (!matched)
+  {
     std::string name = adv->getName();
-    if (!name.empty()) {
-      for (const char** kw = ble_flock_names; *kw; kw++) {
-        if (bleNameContains(name.c_str(), *kw)) {
-          matched       = true;
-          bleAlertType  = ALERT_BLE_NAME;
+    if (!name.empty())
+    {
+      for (const char **kw = ble_flock_names; *kw; kw++)
+      {
+        if (bleNameContains(name.c_str(), *kw))
+        {
+          matched = true;
+          bleAlertType = ALERT_BLE_NAME;
           bleConfidence = CS_BLE_NAME_STANDALONE;
           break;
         }
@@ -581,9 +614,10 @@ static void fyProcessBLEAdvertisedDevice(NimBLEAdvertisedDevice* adv) {
     }
   }
 
-  if (matched) {
+  if (matched)
+  {
     g_bleFlockLastSeen = (uint32_t)millis();
-    g_bleFlockRssi     = rssi;
+    g_bleFlockRssi = rssi;
 
     // FIX (root cause of "it still isn't alerting"): a BLE-only match used
     // to stop here — it only recorded the timestamp above as a confidence
@@ -598,8 +632,10 @@ static void fyProcessBLEAdvertisedDevice(NimBLEAdvertisedDevice* adv) {
     // Strong-RSSI bonus, mirroring fy_confidence.h's CS_STRONG_RSSI
     // philosophy (RSSI > -70 dBm => device is physically close).
     int conf = (int)bleConfidence;
-    if (rssi > -70) conf += 5;
-    if (conf > 100) conf = 100;
+    if (rssi > -70)
+      conf += 5;
+    if (conf > 100)
+      conf = 100;
 
     // Parse the BLE device's own MAC out of its string form (distinct from
     // any WiFi MAC) so it can go through the identical enqueueAlert()/
@@ -625,19 +661,23 @@ static void fyProcessBLEAdvertisedDevice(NimBLEAdvertisedDevice* adv) {
 // Thin per-API-version wrapper class — only the base class, method name/
 // signature differ; all real logic lives in fyProcessBLEAdvertisedDevice().
 #if FY_NIMBLE_V2
-class FlockBLECallbacks : public NimBLEScanCallbacks {
-  void onResult(const NimBLEAdvertisedDevice* adv) override {
+class FlockBLECallbacks : public NimBLEScanCallbacks
+{
+  void onResult(const NimBLEAdvertisedDevice *adv) override
+  {
     // 2.x hands us a const-qualified view; fyProcessBLEAdvertisedDevice()
     // takes non-const because NimBLE 1.x's getters are non-const (see
     // comment above the function).  Safe to cast away: the underlying
     // object is never truly const, only the pointer type differs by API
     // version.
-    fyProcessBLEAdvertisedDevice(const_cast<NimBLEAdvertisedDevice*>(adv));
+    fyProcessBLEAdvertisedDevice(const_cast<NimBLEAdvertisedDevice *>(adv));
   }
 };
 #else
-class FlockBLECallbacks : public NimBLEAdvertisedDeviceCallbacks {
-  void onResult(NimBLEAdvertisedDevice* adv) override {
+class FlockBLECallbacks : public NimBLEAdvertisedDeviceCallbacks
+{
+  void onResult(NimBLEAdvertisedDevice *adv) override
+  {
     fyProcessBLEAdvertisedDevice(adv);
   }
 };
@@ -645,10 +685,12 @@ class FlockBLECallbacks : public NimBLEAdvertisedDeviceCallbacks {
 
 static FlockBLECallbacks g_bleCallbacks;
 
-
-static void bleScanStart() {
-  if (!g_pBLEScan) return;
-  if (g_pBLEScan->isScanning()) return;
+static void bleScanStart()
+{
+  if (!g_pBLEScan)
+    return;
+  if (g_pBLEScan->isScanning())
+    return;
   g_pBLEScan->clearResults();
   // Passive (false = no scan-request packets — avoids alerting the camera).
   // NOTE: passing (uint32_t, bool) here would resolve to NimBLEScan's
@@ -657,15 +699,19 @@ static void bleScanStart() {
   // or the internal duration-complete event fires. Passing an explicit
   // (possibly-null) callback forces resolution to the intended ASYNC
   // overload: bool start(uint32_t, void(*)(NimBLEScanResults), bool).
-  g_pBLEScan->start((uint32_t)(BLE_SCAN_DWELL_MS / 1000), (void (*)(NimBLEScanResults))nullptr, false);
+  g_pBLEScan->start((uint32_t)(BLE_SCAN_DWELL_MS / 1000), (void (*)(NimBLEScanResults)) nullptr, false);
 }
 
-static void bleScanStop() {
-  if (!g_pBLEScan) return;
-  if (g_pBLEScan->isScanning()) g_pBLEScan->stop();
+static void bleScanStop()
+{
+  if (!g_pBLEScan)
+    return;
+  if (g_pBLEScan->isScanning())
+    g_pBLEScan->stop();
 }
 
-static void initBLE() {
+static void initBLE()
+{
   NimBLEDevice::init("");
   // NimBLE 1.x's NimBLEDevice::setPower() ONLY has the
   // esp_power_level_t-enum overload (setPower(esp_power_level_t, ...)) — it
@@ -673,9 +719,9 @@ static void initBLE() {
   // overload in favor of a dBm-based int overload.  Must version-gate;
   // 3 dBm ≈ ESP_PWR_LVL_P3.
 #if FY_NIMBLE_V2
-  NimBLEDevice::setPower(3);               // dBm-based (2.x only)
+  NimBLEDevice::setPower(3); // dBm-based (2.x only)
 #else
-  NimBLEDevice::setPower(ESP_PWR_LVL_P3);  // enum-based (1.x only)
+  NimBLEDevice::setPower(ESP_PWR_LVL_P3); // enum-based (1.x only)
 #endif
   g_pBLEScan = NimBLEDevice::getScan();
 
@@ -694,7 +740,6 @@ static void initBLE() {
 }
 
 #include "ble_selftest.h"
-
 
 // ── BLE_COEX_MODE=1: true simultaneous WiFi + BLE ────────────────────────────
 // When BLE_COEX_MODE is set, the ESP-IDF software coexistence scheduler
@@ -733,37 +778,46 @@ static void initBLE() {
 // This silently explained the original "BLE-only Flock detections never
 // alert" bug report AND the self-test freeze — both were actually this.
 // Fix: pass an explicit typed null callback to force the async overload.
-static void bleCoexStart() {
-  if (!g_pBLEScan) return;
-  if (g_pBLEScan->isScanning()) return;
+static void bleCoexStart()
+{
+  if (!g_pBLEScan)
+    return;
+  if (g_pBLEScan->isScanning())
+    return;
   g_pBLEScan->clearResults();
   // duration = 0 → scan runs indefinitely until stop() is called
-  g_pBLEScan->start(0, (void (*)(NimBLEScanResults))nullptr);
+  g_pBLEScan->start(0, (void (*)(NimBLEScanResults)) nullptr);
   Serial.println("[flockyou] BLE coex-scan started (continuous, promisc always ON)");
 }
 
 // Called from loop() — just keeps the continuous scan alive.
 // No promiscuous pause/resume needed; the coexistence module handles it.
-static void bleScanTick(bool& /*promiscPaused*/) {
-  if (!g_pBLEScan) return;
-  if (!g_pBLEScan->isScanning()) {
+static void bleScanTick(bool & /*promiscPaused*/)
+{
+  if (!g_pBLEScan)
+    return;
+  if (!g_pBLEScan->isScanning())
+  {
     // Scan stopped unexpectedly (BLE stack reset, etc.) — restart it.
     // Same overload-resolution fix as bleCoexStart() above.
     g_pBLEScan->clearResults();
-    g_pBLEScan->start(0, (void (*)(NimBLEScanResults))nullptr);
+    g_pBLEScan->start(0, (void (*)(NimBLEScanResults)) nullptr);
     Serial.println("[flockyou] BLE coex-scan restarted");
   }
 }
 
-#else  // BLE_COEX_MODE == 0 — original manual pause/resume time-multiplexing
+#else // BLE_COEX_MODE == 0 — original manual pause/resume time-multiplexing
 
 // Called from loop() — handles BLE scan scheduling around WiFi promiscuous mode.
 // The WiFi promiscuous mode must be paused before BLE can use the shared radio.
-static void bleScanTick(bool& promiscPaused) {
+static void bleScanTick(bool &promiscPaused)
+{
   unsigned long now = millis();
-  if (now < g_bleNextScan) return;
+  if (now < g_bleNextScan)
+    return;
 
-  if (!promiscPaused) {
+  if (!promiscPaused)
+  {
     // Pause promiscuous mode for the BLE scan window
     esp_wifi_set_promiscuous(false);
     promiscPaused = true;
@@ -772,7 +826,8 @@ static void bleScanTick(bool& promiscPaused) {
   }
 
   // Wait until BLE scan completes, then resume
-  if (g_pBLEScan && !g_pBLEScan->isScanning()) {
+  if (g_pBLEScan && !g_pBLEScan->isScanning())
+  {
     esp_wifi_set_promiscuous(true);
     promiscPaused = false;
     g_bleNextScan = now + BLE_SCAN_INTERVAL_MS;
@@ -780,47 +835,48 @@ static void bleScanTick(bool& promiscPaused) {
   }
 }
 
-#endif  // BLE_COEX_MODE
+#endif // BLE_COEX_MODE
 
-
-#endif  // ENABLE_BLE_SCAN
+#endif // ENABLE_BLE_SCAN
 
 // ============================================================
 // DETECTION TABLE  (on-device storage, persisted to SPIFFS)
 // ============================================================
 
-typedef struct {
-  char     mac[18];
-  char     method[16];
-  int8_t   rssi;
-  uint8_t  channel;
+typedef struct
+{
+  char mac[18];
+  char method[16];
+  int8_t rssi;
+  uint8_t channel;
   uint32_t firstSeen;
   uint32_t lastSeen;
   uint16_t count;
-  char     ssid[33];
-  uint8_t  maxConfidence;   // highest confidence score seen for this MAC
+  char ssid[33];
+  uint8_t maxConfidence; // highest confidence score seen for this MAC
 } FYDetection;
 
 static FYDetection fyDet[MAX_DETECTIONS];
-static int           fyDetCount       = 0;
-static bool          fySpiffsReady    = false;
-static bool          fyDirty          = false;
-static unsigned long fyLastSaveAt     = 0;
-static int           fyLastSaveCount  = 0;
+static int fyDetCount = 0;
+static bool fySpiffsReady = false;
+static bool fyDirty = false;
+static unsigned long fyLastSaveAt = 0;
+static int fyLastSaveCount = 0;
 
 // ============================================================
 // STATE
 // ============================================================
 
-static uint8_t  currentChannel = 1;
-static size_t   customChannelIndex = 0;
-static size_t   fullHopIndex = 0;
+static uint8_t currentChannel = 1;
+static size_t customChannelIndex = 0;
+static size_t fullHopIndex = 0;
 static unsigned long lastHop = 0;
 static unsigned long lastHeartbeat = 0;
 static volatile bool sniffingStopped = false;
 
 #define DEDUPE_SLOTS 8
-static struct {
+static struct
+{
   char mac[18];
   unsigned long ts;
 } dedupeTable[DEDUPE_SLOTS];
@@ -828,7 +884,7 @@ static size_t dedupeIdx = 0;
 
 static volatile unsigned long ledOffAt = 0;
 
-static unsigned long fyLastTargetSeen  = 0;
+static unsigned long fyLastTargetSeen = 0;
 
 // Tracks whether promiscuous mode is currently paused for BLE
 static bool fyPromiscPaused = false;
@@ -847,7 +903,7 @@ static bool fyPromiscPaused = false;
 // trigger this (they have no WiFi channel concept -- e.channel is always 0
 // for them -- and BLE_COEX_MODE's scan runs independently of currentChannel
 // anyway, so there'd be nothing meaningful to lock to).
-static bool          channelLockActive    = false;
+static bool channelLockActive = false;
 static unsigned long channelLockLastHitAt = 0;
 #define CHANNEL_LOCK_TIMEOUT_MS 5000UL
 
@@ -862,34 +918,37 @@ static unsigned long channelLockLastHitAt = 0;
 // forces an immediate channel hop (mirrors the M5Basic "Btn C" / StickC
 // "Btn B" action) plus a short audible/visual acknowledgement.
 #if defined(HAS_SIMPLE_BUTTON)
-static bool          simpleBtnLastState     = true;  // idle = HIGH (pulled up)
-static unsigned long simpleBtnLastChangeMs  = 0;
+static bool simpleBtnLastState = true; // idle = HIGH (pulled up)
+static unsigned long simpleBtnLastChangeMs = 0;
 #define SIMPLE_BUTTON_DEBOUNCE_MS 50
 
 // Returns true exactly once per physical press (debounced falling edge).
-static bool simpleButtonPressed() {
+static bool simpleButtonPressed()
+{
   bool cur = digitalRead(SIMPLE_BUTTON_PIN);
   unsigned long now = millis();
-  if (cur != simpleBtnLastState && (now - simpleBtnLastChangeMs) > SIMPLE_BUTTON_DEBOUNCE_MS) {
+  if (cur != simpleBtnLastState && (now - simpleBtnLastChangeMs) > SIMPLE_BUTTON_DEBOUNCE_MS)
+  {
     simpleBtnLastChangeMs = now;
-    simpleBtnLastState    = cur;
-    if (!cur) return true;   // LOW == pressed
+    simpleBtnLastState = cur;
+    if (!cur)
+      return true; // LOW == pressed
   }
   return false;
 }
 #endif
 
-
 // ============================================================
 // 802.11 HEADER
 // ============================================================
 
-typedef struct __attribute__((packed)) {
+typedef struct __attribute__((packed))
+{
   uint16_t frame_ctrl;
   uint16_t duration;
-  uint8_t  addr1[6];
-  uint8_t  addr2[6];
-  uint8_t  addr3[6];
+  uint8_t addr1[6];
+  uint8_t addr2[6];
+  uint8_t addr3[6];
   uint16_t seq_ctrl;
 } wifi_ieee80211_mac_hdr_t;
 
@@ -899,13 +958,15 @@ typedef struct __attribute__((packed)) {
 
 static char _dualBuf[384];
 
-static void dualPrintf(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
-static void dualPrintf(const char* fmt, ...) {
+static void dualPrintf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+static void dualPrintf(const char *fmt, ...)
+{
   va_list args;
   va_start(args, fmt);
   int n = vsnprintf(_dualBuf, sizeof(_dualBuf), fmt, args);
   va_end(args);
-  if (n > 0) {
+  if (n > 0)
+  {
     Serial.write(_dualBuf, n);
 #if MIRROR_SERIAL && !defined(USE_M5ATOM_VOICES3R)
     Serial1.write(_dualBuf, n);
@@ -916,7 +977,8 @@ static void dualPrintf(const char* fmt, ...) {
   }
 }
 
-static void dualPrintln(const char* str) {
+static void dualPrintln(const char *str)
+{
   Serial.println(str);
 #if MIRROR_SERIAL && !defined(USE_M5ATOM_VOICES3R)
   Serial1.println(str);
@@ -926,35 +988,46 @@ static void dualPrintln(const char* str) {
 #endif
 }
 
-
-static void ledFlash(unsigned ms) {
+static void ledFlash(unsigned ms)
+{
 #if USE_LED
   ledSet(true);
   ledOffAt = millis() + ms;
-  if (ledOffAt == 0) ledOffAt = 1;
+  if (ledOffAt == 0)
+    ledOffAt = 1;
 #endif
 }
 
-static void ledTick() {
+static void ledTick()
+{
 #if USE_LED
-  if (ledOffAt && (long)(millis() - ledOffAt) >= 0) {
+  if (ledOffAt && (long)(millis() - ledOffAt) >= 0)
+  {
     ledSet(false);
     ledOffAt = 0;
   }
 #endif
 }
 
-static void buzzerBeep(unsigned int ms) {
+static void buzzerBeep(unsigned int ms)
+{
 #if USE_BUZZER
-  digitalWrite(BUZZER_PIN, HIGH); delay(ms); digitalWrite(BUZZER_PIN, LOW);
+  digitalWrite(BUZZER_PIN, HIGH);
+  delay(ms);
+  digitalWrite(BUZZER_PIN, LOW);
 #endif
 }
 
-static void newDetectChirp() {
+static void newDetectChirp()
+{
 #if USE_BUZZER
-  tone(BUZZER_PIN, NEW_CHIRP_LO_HZ); delay(NEW_CHIRP_NOTE_MS); noTone(BUZZER_PIN);
+  tone(BUZZER_PIN, NEW_CHIRP_LO_HZ);
+  delay(NEW_CHIRP_NOTE_MS);
+  noTone(BUZZER_PIN);
   delay(NEW_CHIRP_GAP_MS);
-  tone(BUZZER_PIN, NEW_CHIRP_HI_HZ); delay(NEW_CHIRP_NOTE_MS); noTone(BUZZER_PIN);
+  tone(BUZZER_PIN, NEW_CHIRP_HI_HZ);
+  delay(NEW_CHIRP_NOTE_MS);
+  noTone(BUZZER_PIN);
 #elif defined(USE_M5BASIC)
   // M5.Speaker shares the M5Unified singleton the UI task (ui_task.h) now
   // exclusively owns for display access — never call it directly from the
@@ -970,11 +1043,16 @@ static void newDetectChirp() {
 #endif
 }
 
-static void heartbeatBeep() {
+static void heartbeatBeep()
+{
 #if USE_BUZZER
-  tone(BUZZER_PIN, HB_BEEP_HZ); delay(HB_BEEP_NOTE_MS); noTone(BUZZER_PIN);
+  tone(BUZZER_PIN, HB_BEEP_HZ);
+  delay(HB_BEEP_NOTE_MS);
+  noTone(BUZZER_PIN);
   delay(HB_BEEP_GAP_MS);
-  tone(BUZZER_PIN, HB_BEEP_HZ); delay(HB_BEEP_NOTE_MS); noTone(BUZZER_PIN);
+  tone(BUZZER_PIN, HB_BEEP_HZ);
+  delay(HB_BEEP_NOTE_MS);
+  noTone(BUZZER_PIN);
 #elif defined(USE_M5BASIC)
   // See newDetectChirp() above — hand off to the UI task instead of
   // touching M5.Speaker directly from the scan/main task.
@@ -988,90 +1066,128 @@ static void heartbeatBeep() {
 #endif
 }
 
-static void startupBeep() {
+static void startupBeep()
+{
 #if USE_BUZZER
-  static const uint16_t notes[6] = { 523, 262, 440, 220, 415, 208 };
-  for (int i = 0; i < 6; i++) {
+  static const uint16_t notes[6] = {523, 262, 440, 220, 415, 208};
+  for (int i = 0; i < 6; i++)
+  {
     tone(BUZZER_PIN, notes[i]);
     delay((i == 5) ? 160 : 95);
     noTone(BUZZER_PIN);
-    if (i < 5) delay(22);
+    if (i < 5)
+      delay(22);
   }
 #elif defined(USE_M5_SPEAKER) && USE_M5_SPEAKER
-  static const uint16_t notes[] = { 659, 659, 659, 523, 659, 784, 392 };
-  static const uint16_t durs[]  = { 100, 100, 100, 100, 100, 300, 300 };
-  static const uint8_t  gaps[]  = {  80,  80,  80,   0,   0,  80,   0 };
-  for (size_t i = 0; i < sizeof(notes)/sizeof(notes[0]); i++) {
+  static const uint16_t notes[] = {659, 659, 659, 523, 659, 784, 392};
+  static const uint16_t durs[] = {100, 100, 100, 100, 100, 300, 300};
+  static const uint8_t gaps[] = {80, 80, 80, 0, 0, 80, 0};
+  for (size_t i = 0; i < sizeof(notes) / sizeof(notes[0]); i++)
+  {
     M5.Speaker.tone(notes[i], durs[i]);
     delay(durs[i]);
-    if (gaps[i]) { M5.Speaker.stop(); delay(gaps[i]); }
+    if (gaps[i])
+    {
+      M5.Speaker.stop();
+      delay(gaps[i]);
+    }
   }
   M5.Speaker.stop();
 #endif
 }
 
-static void macToStr(const uint8_t* mac, char* buf, size_t len) {
+static void macToStr(const uint8_t *mac, char *buf, size_t len)
+{
   snprintf(buf, len, "%02x:%02x:%02x:%02x:%02x:%02x",
            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 }
-static void ouiFromMac(const uint8_t* mac, char* buf, size_t len) {
+static void ouiFromMac(const uint8_t *mac, char *buf, size_t len)
+{
   snprintf(buf, len, "%02x:%02x:%02x", mac[0], mac[1], mac[2]);
 }
 
 // precompileOuis()/isMulticast()/matchFlockHighOui()/matchFlockMfrOui()/
 // matchSoundThinkingOui()/matchOuiRaw() moved to fy_confidence.h.
 
-static char* strcasestr_local(const char* haystack, const char* needle) {
-  if (!*needle) return (char*)haystack;
-  for (; *haystack; ++haystack) {
-    const char* h = haystack; const char* n = needle;
-    while (*h && *n && tolower((unsigned char)*h) == tolower((unsigned char)*n)) { ++h; ++n; }
-    if (!*n) return (char*)haystack;
+static char *strcasestr_local(const char *haystack, const char *needle)
+{
+  if (!*needle)
+    return (char *)haystack;
+  for (; *haystack; ++haystack)
+  {
+    const char *h = haystack;
+    const char *n = needle;
+    while (*h && *n && tolower((unsigned char)*h) == tolower((unsigned char)*n))
+    {
+      ++h;
+      ++n;
+    }
+    if (!*n)
+      return (char *)haystack;
   }
   return nullptr;
 }
 
-static bool matchSsidKeyword(const char* ssid) {
+static bool matchSsidKeyword(const char *ssid)
+{
   for (size_t i = 0; i < SSID_KEYWORD_COUNT; i++)
-    if (strcasestr_local(ssid, target_ssid_keywords[i])) return true;
+    if (strcasestr_local(ssid, target_ssid_keywords[i]))
+      return true;
   return false;
 }
 
 // Returns true if ssid is the exact "Flock Camera net." string (case-sensitive
 // match because the real SSID is consistent per field reports).
-static bool IRAM_ATTR isFcnSsid(const char* ssid) {
+static bool IRAM_ATTR isFcnSsid(const char *ssid)
+{
   return ssid && (strcmp(ssid, ssid_exact_flock_cam_net) == 0);
 }
 
-static const char* channelModeName() {
-  switch (CHANNEL_MODE) {
-    case CHANNEL_MODE_FULL_HOP: return "FULL_HOP";
-    case CHANNEL_MODE_CUSTOM:   return "CUSTOM";
-    case CHANNEL_MODE_SINGLE:   return "SINGLE";
-    default:                    return "UNKNOWN";
+static const char *channelModeName()
+{
+  switch (CHANNEL_MODE)
+  {
+  case CHANNEL_MODE_FULL_HOP:
+    return "FULL_HOP";
+  case CHANNEL_MODE_CUSTOM:
+    return "CUSTOM";
+  case CHANNEL_MODE_SINGLE:
+    return "SINGLE";
+  default:
+    return "UNKNOWN";
   }
 }
 
 // Returns frequency in MHz for any channel:
 //   2.4 GHz: ch 1–14 → 2407 + 5*ch  (exactly per 802.11 spec)
 //   5 GHz:   ch 36–165 → 5000 + 5*ch (UNII-3: ch 149=5745, 157=5785)
-static inline uint16_t channelFreqMhz(uint8_t ch) {
-  if (ch >= 1  && ch <= 14)  return (uint16_t)(2407 + 5 * ch);
-  if (ch >= 36 && ch <= 165) return (uint16_t)(5000 + 5 * ch);
+static inline uint16_t channelFreqMhz(uint8_t ch)
+{
+  if (ch >= 1 && ch <= 14)
+    return (uint16_t)(2407 + 5 * ch);
+  if (ch >= 36 && ch <= 165)
+    return (uint16_t)(5000 + 5 * ch);
   return 0;
 }
 
-static const char* channelBand(uint8_t ch) {
-  if (ch >= 1  && ch <= 14)  return "wifi_2_4ghz";
-  if (ch >= 36 && ch <= 165) return "wifi_5ghz";
+static const char *channelBand(uint8_t ch)
+{
+  if (ch >= 1 && ch <= 14)
+    return "wifi_2_4ghz";
+  if (ch >= 36 && ch <= 165)
+    return "wifi_5ghz";
   return "wifi_unknown";
 }
 
-static bool shouldSuppressDuplicate(const char* macStr) {
+static bool shouldSuppressDuplicate(const char *macStr)
+{
   unsigned long now = millis();
-  for (size_t i = 0; i < DEDUPE_SLOTS; i++) {
-    if (strcmp(dedupeTable[i].mac, macStr) == 0) {
-      if ((now - dedupeTable[i].ts) < ALERT_COOLDOWN_MS) return true;
+  for (size_t i = 0; i < DEDUPE_SLOTS; i++)
+  {
+    if (strcmp(dedupeTable[i].mac, macStr) == 0)
+    {
+      if ((now - dedupeTable[i].ts) < ALERT_COOLDOWN_MS)
+        return true;
       dedupeTable[i].ts = now;
       return false;
     }
@@ -1082,14 +1198,17 @@ static bool shouldSuppressDuplicate(const char* macStr) {
   return false;
 }
 
-static void stopSniffing(const char* reason) {
-  if (sniffingStopped) return;
+static void stopSniffing(const char *reason)
+{
+  if (sniffingStopped)
+    return;
   sniffingStopped = true;
   esp_wifi_set_promiscuous(false);
   dualPrintf("[flockyou] sniffing stopped: %s\n", reason);
 }
 
-static void applyInitialChannel() {
+static void applyInitialChannel()
+{
 #if CHANNEL_MODE == CHANNEL_MODE_SINGLE
   currentChannel = SINGLE_CHANNEL;
 #elif CHANNEL_MODE == CHANNEL_MODE_CUSTOM
@@ -1101,46 +1220,54 @@ static void applyInitialChannel() {
   lastHop = millis();
 }
 
-static void updateChannelMode() {
+static void updateChannelMode()
+{
 
-  if (sniffingStopped || fyPromiscPaused) return;
+  if (sniffingStopped || fyPromiscPaused)
+    return;
 
   // Channel lock takes priority over both SINGLE and hop modes: while
   // locked, skip everything below and just keep sitting on currentChannel.
   // Release (and fall through to normal hop/single logic) once the target
   // has been quiet for CHANNEL_LOCK_TIMEOUT_MS.
-  if (channelLockActive) {
-    if (millis() - channelLockLastHitAt < CHANNEL_LOCK_TIMEOUT_MS) return;
+  if (channelLockActive)
+  {
+    if (millis() - channelLockLastHitAt < CHANNEL_LOCK_TIMEOUT_MS)
+      return;
     channelLockActive = false;
     dualPrintf("[flockyou] channel lock released (ch=%u quiet %lus) -- resuming hop\n",
                currentChannel, (unsigned long)(CHANNEL_LOCK_TIMEOUT_MS / 1000));
   }
 
 #if CHANNEL_MODE == CHANNEL_MODE_SINGLE
-  if (currentChannel != SINGLE_CHANNEL) {
+  if (currentChannel != SINGLE_CHANNEL)
+  {
     currentChannel = SINGLE_CHANNEL;
     esp_wifi_set_channel(currentChannel, WIFI_SECOND_CHAN_NONE);
   }
   return;
 #else
-  if (millis() - lastHop < CHANNEL_DWELL_MS) return;
+  if (millis() - lastHop < CHANNEL_DWELL_MS)
+    return;
 
-  #if CHANNEL_MODE == CHANNEL_MODE_CUSTOM
-    customChannelIndex = (customChannelIndex + 1) % customChannelCount;
-    currentChannel = customChannels[customChannelIndex];
-  #else
-    fullHopIndex = (fullHopIndex + 1) % fullHopChannelCount;
-    currentChannel = fullHopChannels[fullHopIndex];
-  #endif
+#if CHANNEL_MODE == CHANNEL_MODE_CUSTOM
+  customChannelIndex = (customChannelIndex + 1) % customChannelCount;
+  currentChannel = customChannels[customChannelIndex];
+#else
+  fullHopIndex = (fullHopIndex + 1) % fullHopChannelCount;
+  currentChannel = fullHopChannels[fullHopIndex];
+#endif
   esp_wifi_set_channel(currentChannel, WIFI_SECOND_CHAN_NONE);
   lastHop = millis();
 #endif
 }
 
-static void printHeartbeat() {
-  if (millis() - lastHeartbeat >= HEARTBEAT_MS) {
+static void printHeartbeat()
+{
+  if (millis() - lastHeartbeat >= HEARTBEAT_MS)
+  {
     dualPrintf("[flockyou] scanning (ch=%u mode=%s det=%d)\n",
-                  currentChannel, channelModeName(), fyDetCount);
+               currentChannel, channelModeName(), fyDetCount);
     lastHeartbeat = millis();
     // C5's periodic scanning-screen redraw now happens inside the UI task's
     // own HEARTBEAT_MS gate (ui_task.h) — no direct display call here.
@@ -1155,7 +1282,8 @@ static void printHeartbeat() {
 // no-ops most calls, so calling them unconditionally here is what actually
 // makes the screen redraw several times per second in real time instead of
 // once every 30 s.
-static void screenTick() {
+static void screenTick()
+{
   // Publish the current scanning status to the UI task (ui_task.h) instead
   // of calling m5basicScanning()/m5stickcScanning() directly — those touch
   // M5Unified, which only the UI task may access now. Cheap even on boards
@@ -1177,22 +1305,27 @@ static void screenTick() {
 // in the STATE section above for the full rationale. Defined here (after
 // fy_confidence.h) because it references CHIRP_MIN_CONFIDENCE, which is
 // only visible to the preprocessor from this point in the file onward.
-static void maybeLockChannel(const AlertEntry& e) {
+static void maybeLockChannel(const AlertEntry &e)
+{
   bool isBleAlert = (e.type == ALERT_BLE_MFR_ID || e.type == ALERT_BLE_RAVEN_UUID ||
                      e.type == ALERT_BLE_NAME);
-  if (isBleAlert) return;                          // no WiFi channel to lock to
-  if (e.confidence < CHIRP_MIN_CONFIDENCE) return;  // only confident hits lock
+  if (isBleAlert)
+    return; // no WiFi channel to lock to
+  if (e.confidence < CHIRP_MIN_CONFIDENCE)
+    return; // only confident hits lock
 
-  if (!channelLockActive) {
+  if (!channelLockActive)
+  {
     dualPrintf("[flockyou] channel LOCKED to ch=%u (confident hit, conf=%u) -- "
                "holding until camera goes quiet\n",
                (unsigned)e.channel, (unsigned)e.confidence);
   }
-  if (currentChannel != e.channel) {
+  if (currentChannel != e.channel)
+  {
     currentChannel = e.channel;
     esp_wifi_set_channel(currentChannel, WIFI_SECOND_CHAN_NONE);
   }
-  channelLockActive    = true;
+  channelLockActive = true;
   channelLockLastHitAt = millis();
 }
 
@@ -1200,62 +1333,85 @@ static void maybeLockChannel(const AlertEntry& e) {
 // DETECTION TABLE OPS
 // ============================================================
 
-
-static const char* alertTypeToMethod(AlertType t) {
-  switch (t) {
-    case ALERT_OUI_ADDR2:      return "oui_addr2";
-    case ALERT_OUI_ADDR1:      return "oui_addr1";
-    case ALERT_OUI_ADDR3:      return "oui_addr3";
-    case ALERT_SSID:           return "ssid";
-    case ALERT_WILDCARD_PROBE: return "wildcard_probe";
-    case ALERT_LAA_SSID:       return "laa_ssid";
-    case ALERT_OUI_MFR:        return "oui_mfr";       // PR#39 contract-mfr
-    case ALERT_SOUNDTHINKING:  return "soundthinking";  // PR#39 SoundThinking
-    case ALERT_BLE_MFR_ID:     return "ble_mfr_id";      // standalone BLE mfr-ID
-    case ALERT_BLE_RAVEN_UUID: return "ble_raven_uuid";  // standalone Raven UUID
-    case ALERT_BLE_NAME:       return "ble_name";        // standalone BLE name
-    default:                   return "unknown";
+static const char *alertTypeToMethod(AlertType t)
+{
+  switch (t)
+  {
+  case ALERT_OUI_ADDR2:
+    return "oui_addr2";
+  case ALERT_OUI_ADDR1:
+    return "oui_addr1";
+  case ALERT_OUI_ADDR3:
+    return "oui_addr3";
+  case ALERT_SSID:
+    return "ssid";
+  case ALERT_WILDCARD_PROBE:
+    return "wildcard_probe";
+  case ALERT_LAA_SSID:
+    return "laa_ssid";
+  case ALERT_OUI_MFR:
+    return "oui_mfr"; // PR#39 contract-mfr
+  case ALERT_SOUNDTHINKING:
+    return "soundthinking"; // PR#39 SoundThinking
+  case ALERT_BLE_MFR_ID:
+    return "ble_mfr_id"; // standalone BLE mfr-ID
+  case ALERT_BLE_RAVEN_UUID:
+    return "ble_raven_uuid"; // standalone Raven UUID
+  case ALERT_BLE_NAME:
+    return "ble_name"; // standalone BLE name
+  default:
+    return "unknown";
   }
 }
 
-static int fyAddDetection(const char* mac, const char* method,
-                          int8_t rssi, uint8_t ch, const char* ssid,
-                          uint8_t confidence, bool* outChirpWorthy) {
+static int fyAddDetection(const char *mac, const char *method,
+                          int8_t rssi, uint8_t ch, const char *ssid,
+                          uint8_t confidence, bool *outChirpWorthy)
+{
   uint32_t now = millis();
-  for (int i = 0; i < fyDetCount; i++) {
-    if (strcasecmp(fyDet[i].mac, mac) == 0) {
+  for (int i = 0; i < fyDetCount; i++)
+  {
+    if (strcasecmp(fyDet[i].mac, mac) == 0)
+    {
       bool rediscover = (now - fyDet[i].lastSeen) > REDISCOVER_MS;
-      if (fyDet[i].count < 0xFFFF) fyDet[i].count++;
+      if (fyDet[i].count < 0xFFFF)
+        fyDet[i].count++;
       fyDet[i].lastSeen = now;
-      fyDet[i].rssi     = rssi;
-      fyDet[i].channel  = ch;
+      fyDet[i].rssi = rssi;
+      fyDet[i].channel = ch;
       if (confidence > fyDet[i].maxConfidence)
         fyDet[i].maxConfidence = confidence;
       if (ssid && ssid[0] && !fyDet[i].ssid[0])
         strlcpy(fyDet[i].ssid, ssid, sizeof(fyDet[i].ssid));
       fyDirty = true;
-      if (outChirpWorthy) *outChirpWorthy = rediscover;
+      if (outChirpWorthy)
+        *outChirpWorthy = rediscover;
       return i;
     }
   }
-  if (fyDetCount >= MAX_DETECTIONS) {
-    if (outChirpWorthy) *outChirpWorthy = false;
+  if (fyDetCount >= MAX_DETECTIONS)
+  {
+    if (outChirpWorthy)
+      *outChirpWorthy = false;
     return -1;
   }
-  FYDetection& d = fyDet[fyDetCount];
-  strlcpy(d.mac,    mac,                  sizeof(d.mac));
+  FYDetection &d = fyDet[fyDetCount];
+  strlcpy(d.mac, mac, sizeof(d.mac));
   strlcpy(d.method, method ? method : "", sizeof(d.method));
-  d.rssi          = rssi;
-  d.channel       = ch;
-  d.firstSeen     = now;
-  d.lastSeen      = now;
-  d.count         = 1;
+  d.rssi = rssi;
+  d.channel = ch;
+  d.firstSeen = now;
+  d.lastSeen = now;
+  d.count = 1;
   d.maxConfidence = confidence;
-  if (ssid && ssid[0]) strlcpy(d.ssid, ssid, sizeof(d.ssid));
-  else                 d.ssid[0] = '\0';
+  if (ssid && ssid[0])
+    strlcpy(d.ssid, ssid, sizeof(d.ssid));
+  else
+    d.ssid[0] = '\0';
   fyDetCount++;
   fyDirty = true;
-  if (outChirpWorthy) *outChirpWorthy = true;
+  if (outChirpWorthy)
+    *outChirpWorthy = true;
   return fyDetCount - 1;
 }
 
@@ -1263,21 +1419,34 @@ static int fyAddDetection(const char* mac, const char* method,
 // JSON ESCAPE
 // ============================================================
 
-static size_t jsonEscape(char* dst, size_t cap, const char* src) {
+static size_t jsonEscape(char *dst, size_t cap, const char *src)
+{
   size_t o = 0;
-  if (cap == 0) return 0;
-  for (size_t i = 0; src[i]; i++) {
+  if (cap == 0)
+    return 0;
+  for (size_t i = 0; src[i]; i++)
+  {
     char c = src[i];
-    if (c == '"' || c == '\\') {
-      if (o + 2 >= cap) break;
-      dst[o++] = '\\'; dst[o++] = c;
-    } else if ((unsigned char)c < 0x20) {
-      if (o + 6 >= cap) break;
+    if (c == '"' || c == '\\')
+    {
+      if (o + 2 >= cap)
+        break;
+      dst[o++] = '\\';
+      dst[o++] = c;
+    }
+    else if ((unsigned char)c < 0x20)
+    {
+      if (o + 6 >= cap)
+        break;
       int n = snprintf(dst + o, cap - o, "\\u%04x", (unsigned)(unsigned char)c);
-      if (n <= 0 || (size_t)n >= cap - o) break;
+      if (n <= 0 || (size_t)n >= cap - o)
+        break;
       o += (size_t)n;
-    } else {
-      if (o + 1 >= cap) break;
+    }
+    else
+    {
+      if (o + 1 >= cap)
+        break;
       dst[o++] = c;
     }
   }
@@ -1289,9 +1458,11 @@ static size_t jsonEscape(char* dst, size_t cap, const char* src) {
 // CRC32
 // ============================================================
 
-static uint32_t fyCRC32Update(uint32_t crc, const uint8_t* data, size_t len) {
+static uint32_t fyCRC32Update(uint32_t crc, const uint8_t *data, size_t len)
+{
   crc = ~crc;
-  for (size_t i = 0; i < len; i++) {
+  for (size_t i = 0; i < len; i++)
+  {
     crc ^= data[i];
     for (int k = 0; k < 8; k++)
       crc = (crc >> 1) ^ (0xEDB88320u & -(int32_t)(crc & 1));
@@ -1303,71 +1474,104 @@ static uint32_t fyCRC32Update(uint32_t crc, const uint8_t* data, size_t len) {
 // SPIFFS SESSION PERSISTENCE
 // ============================================================
 
-static size_t fySerializeDet(const FYDetection& d, char* dst, size_t cap) {
+static size_t fySerializeDet(const FYDetection &d, char *dst, size_t cap)
+{
   char ssidEsc[sizeof(d.ssid) * 6 + 1];
   jsonEscape(ssidEsc, sizeof(ssidEsc), d.ssid);
   int n = snprintf(dst, cap,
-      "{\"mac\":\"%s\",\"method\":\"%s\",\"rssi\":%d,\"channel\":%u,"
-      "\"first\":%lu,\"last\":%lu,\"count\":%u,\"ssid\":\"%s\","
-      "\"confidence\":%u}",
-      d.mac, d.method, d.rssi, (unsigned)d.channel,
-      (unsigned long)d.firstSeen, (unsigned long)d.lastSeen,
-      (unsigned)d.count, ssidEsc, (unsigned)d.maxConfidence);
+                   "{\"mac\":\"%s\",\"method\":\"%s\",\"rssi\":%d,\"channel\":%u,"
+                   "\"first\":%lu,\"last\":%lu,\"count\":%u,\"ssid\":\"%s\","
+                   "\"confidence\":%u}",
+                   d.mac, d.method, d.rssi, (unsigned)d.channel,
+                   (unsigned long)d.firstSeen, (unsigned long)d.lastSeen,
+                   (unsigned)d.count, ssidEsc, (unsigned)d.maxConfidence);
   return (n > 0 && (size_t)n < cap) ? (size_t)n : 0;
 }
 
-static uint32_t fyComputePayloadCRC(size_t& outBytes) {
+static uint32_t fyComputePayloadCRC(size_t &outBytes)
+{
   char line[384];
   uint32_t crc = 0;
   outBytes = 0;
-  crc = fyCRC32Update(crc, (const uint8_t*)"[", 1); outBytes += 1;
-  for (int i = 0; i < fyDetCount; i++) {
-    if (i > 0) { crc = fyCRC32Update(crc, (const uint8_t*)",", 1); outBytes += 1; }
+  crc = fyCRC32Update(crc, (const uint8_t *)"[", 1);
+  outBytes += 1;
+  for (int i = 0; i < fyDetCount; i++)
+  {
+    if (i > 0)
+    {
+      crc = fyCRC32Update(crc, (const uint8_t *)",", 1);
+      outBytes += 1;
+    }
     size_t n = fySerializeDet(fyDet[i], line, sizeof(line));
-    if (n == 0) continue;
-    crc = fyCRC32Update(crc, (const uint8_t*)line, n);
+    if (n == 0)
+      continue;
+    crc = fyCRC32Update(crc, (const uint8_t *)line, n);
     outBytes += n;
   }
-  crc = fyCRC32Update(crc, (const uint8_t*)"]", 1); outBytes += 1;
+  crc = fyCRC32Update(crc, (const uint8_t *)"]", 1);
+  outBytes += 1;
   return crc;
 }
 
-static bool fyParseEnvelope(const char* hdr, size_t& outBytes, uint32_t& outCrc) {
-  const char* b = strstr(hdr, "\"bytes\":");
-  const char* c = strstr(hdr, "\"crc\":\"0x");
-  if (!b || !c) return false;
+static bool fyParseEnvelope(const char *hdr, size_t &outBytes, uint32_t &outCrc)
+{
+  const char *b = strstr(hdr, "\"bytes\":");
+  const char *c = strstr(hdr, "\"crc\":\"0x");
+  if (!b || !c)
+    return false;
   b += 8;
   long long bv = 0;
-  if (sscanf(b, "%lld", &bv) != 1 || bv < 0) return false;
+  if (sscanf(b, "%lld", &bv) != 1 || bv < 0)
+    return false;
   c += 9;
   unsigned cv = 0;
-  if (sscanf(c, "%x", &cv) != 1) return false;
+  if (sscanf(c, "%x", &cv) != 1)
+    return false;
   outBytes = (size_t)bv;
-  outCrc   = (uint32_t)cv;
+  outCrc = (uint32_t)cv;
   return true;
 }
 
-static bool fyValidateSessionFile(const char* path) {
-  if (!fyExists(path)) return false;
+static bool fyValidateSessionFile(const char *path)
+{
+  if (!fyExists(path))
+    return false;
   File f = fyOpen(path, "r");
-  if (!f) return false;
+  if (!f)
+    return false;
   String hdr = f.readStringUntil('\n');
-  if (hdr.length() < 10 || hdr[0] != '{') { f.close(); return false; }
-  size_t   expectedBytes = 0;
-  uint32_t expectedCRC   = 0;
-  if (!fyParseEnvelope(hdr.c_str(), expectedBytes, expectedCRC)) {
-    f.close(); return false;
+  if (hdr.length() < 10 || hdr[0] != '{')
+  {
+    f.close();
+    return false;
+  }
+  size_t expectedBytes = 0;
+  uint32_t expectedCRC = 0;
+  if (!fyParseEnvelope(hdr.c_str(), expectedBytes, expectedCRC))
+  {
+    f.close();
+    return false;
   }
   size_t bodyOffset = hdr.length() + 1;
-  size_t fileSize   = f.size();
-  if (fileSize < bodyOffset + expectedBytes) { f.close(); return false; }
-  if ((fileSize - bodyOffset) != expectedBytes) { f.close(); return false; }
+  size_t fileSize = f.size();
+  if (fileSize < bodyOffset + expectedBytes)
+  {
+    f.close();
+    return false;
+  }
+  if ((fileSize - bodyOffset) != expectedBytes)
+  {
+    f.close();
+    return false;
+  }
   uint8_t buf[256];
   uint32_t crc = 0;
   size_t remaining = expectedBytes;
-  while (remaining > 0) {
+  while (remaining > 0)
+  {
     int n = f.read(buf, remaining < sizeof(buf) ? remaining : sizeof(buf));
-    if (n <= 0) break;
+    if (n <= 0)
+      break;
     crc = fyCRC32Update(crc, buf, (size_t)n);
     remaining -= (size_t)n;
   }
@@ -1375,37 +1579,55 @@ static bool fyValidateSessionFile(const char* path) {
   return (remaining == 0 && crc == expectedCRC);
 }
 
-static bool fySpiffsCopy(const char* src, const char* dst) {
+static bool fySpiffsCopy(const char *src, const char *dst)
+{
   File s = fyOpen(src, "r");
-  if (!s) return false;
+  if (!s)
+    return false;
   File d = fyOpen(dst, "w");
-  if (!d) { s.close(); return false; }
+  if (!d)
+  {
+    s.close();
+    return false;
+  }
   uint8_t buf[256];
   int n;
   bool ok = true;
-  while ((n = s.read(buf, sizeof(buf))) > 0) {
-    if (d.write(buf, (size_t)n) != (size_t)n) { ok = false; break; }
+  while ((n = s.read(buf, sizeof(buf))) > 0)
+  {
+    if (d.write(buf, (size_t)n) != (size_t)n)
+    {
+      ok = false;
+      break;
+    }
   }
   s.close();
   d.close();
   return ok;
 }
 
-static bool fyAtomicPromote(const char* src, const char* dst) {
-  if (fyRename(src, dst)) return true;
-  if (!fySpiffsCopy(src, dst)) return false;
+static bool fyAtomicPromote(const char *src, const char *dst)
+{
+  if (fyRename(src, dst))
+    return true;
+  if (!fySpiffsCopy(src, dst))
+    return false;
   fyRemove(src);
   return true;
 }
 
-static void fySaveSession() {
-  if (!fySpiffsReady) return;
-  if (!fyDirty && fyDetCount == fyLastSaveCount) return;
-  size_t   payloadBytes = 0;
-  uint32_t crc          = fyComputePayloadCRC(payloadBytes);
-  int      savedCount   = fyDetCount;
+static void fySaveSession()
+{
+  if (!fySpiffsReady)
+    return;
+  if (!fyDirty && fyDetCount == fyLastSaveCount)
+    return;
+  size_t payloadBytes = 0;
+  uint32_t crc = fyComputePayloadCRC(payloadBytes);
+  int savedCount = fyDetCount;
   File f = fyOpen(FY_SESSION_TMP, "w");
-  if (!f) {
+  if (!f)
+  {
     dualPrintf("[flockyou] save failed: cannot open %s\n", FY_SESSION_TMP);
     return;
   }
@@ -1413,57 +1635,79 @@ static void fySaveSession() {
            savedCount, (unsigned)payloadBytes, (unsigned long)crc);
   char line[384];
   size_t wrote = 0;
-  f.write((uint8_t*)"[", 1); wrote++;
-  for (int i = 0; i < fyDetCount; i++) {
-    if (i > 0) { f.write((uint8_t*)",", 1); wrote++; }
+  f.write((uint8_t *)"[", 1);
+  wrote++;
+  for (int i = 0; i < fyDetCount; i++)
+  {
+    if (i > 0)
+    {
+      f.write((uint8_t *)",", 1);
+      wrote++;
+    }
     size_t n = fySerializeDet(fyDet[i], line, sizeof(line));
-    if (n == 0) continue;
-    f.write((uint8_t*)line, n);
+    if (n == 0)
+      continue;
+    f.write((uint8_t *)line, n);
     wrote += n;
   }
-  f.write((uint8_t*)"]", 1); wrote++;
+  f.write((uint8_t *)"]", 1);
+  wrote++;
   f.close();
-  if (wrote != payloadBytes) {
+  if (wrote != payloadBytes)
+  {
     dualPrintf("[flockyou] save WARNING: wrote %u expected %u — aborting\n",
                (unsigned)wrote, (unsigned)payloadBytes);
     return;
   }
-  if (!fyValidateSessionFile(FY_SESSION_TMP)) {
+  if (!fyValidateSessionFile(FY_SESSION_TMP))
+  {
     dualPrintf("[flockyou] save verify FAILED — old session preserved\n");
     return;
   }
   fyRemove(FY_SESSION_FILE);
-  if (!fyAtomicPromote(FY_SESSION_TMP, FY_SESSION_FILE)) {
+  if (!fyAtomicPromote(FY_SESSION_TMP, FY_SESSION_FILE))
+  {
     dualPrintf("[flockyou] promote FAILED — data in %s for recovery\n", FY_SESSION_TMP);
     return;
   }
-  fyLastSaveAt    = millis();
+  fyLastSaveAt = millis();
   fyLastSaveCount = savedCount;
-  fyDirty         = false;
+  fyDirty = false;
   dualPrintf("[flockyou] session saved: %d det, %u bytes, crc=0x%08lX\n",
              savedCount, (unsigned)payloadBytes, (unsigned long)crc);
 }
 
-static void fyPromotePrevSession() {
-  if (!fySpiffsReady) return;
-  const char* source = nullptr;
-  if      (fyValidateSessionFile(FY_SESSION_FILE)) source = FY_SESSION_FILE;
-  else if (fyValidateSessionFile(FY_SESSION_TMP))  source = FY_SESSION_TMP;
-  if (!source) {
-    if (fyExists(FY_SESSION_FILE)) fyRemove(FY_SESSION_FILE);
-    if (fyExists(FY_SESSION_TMP))  fyRemove(FY_SESSION_TMP);
+static void fyPromotePrevSession()
+{
+  if (!fySpiffsReady)
+    return;
+  const char *source = nullptr;
+  if (fyValidateSessionFile(FY_SESSION_FILE))
+    source = FY_SESSION_FILE;
+  else if (fyValidateSessionFile(FY_SESSION_TMP))
+    source = FY_SESSION_TMP;
+  if (!source)
+  {
+    if (fyExists(FY_SESSION_FILE))
+      fyRemove(FY_SESSION_FILE);
+    if (fyExists(FY_SESSION_TMP))
+      fyRemove(FY_SESSION_TMP);
     dualPrintln("[flockyou] no valid prior session to promote");
     return;
   }
-  if (!fySpiffsCopy(source, FY_PREV_FILE)) {
+  if (!fySpiffsCopy(source, FY_PREV_FILE))
+  {
     dualPrintf("[flockyou] failed to promote %s → %s\n", source, FY_PREV_FILE);
     return;
   }
-  if (fyExists(FY_SESSION_FILE)) fyRemove(FY_SESSION_FILE);
-  if (fyExists(FY_SESSION_TMP))  fyRemove(FY_SESSION_TMP);
+  if (fyExists(FY_SESSION_FILE))
+    fyRemove(FY_SESSION_FILE);
+  if (fyExists(FY_SESSION_TMP))
+    fyRemove(FY_SESSION_TMP);
   File v = fyOpen(FY_PREV_FILE, "r");
   size_t sz = v ? v.size() : 0;
-  if (v) v.close();
+  if (v)
+    v.close();
   dualPrintf("[flockyou] prior session promoted from %s (%u bytes)\n",
              source, (unsigned)sz);
 }
@@ -1473,10 +1717,11 @@ static void fyPromotePrevSession() {
 // ============================================================
 // Now includes "confidence":%u and "protocol" is band-aware.
 
-static void emitDetectionJSON(const char* mac, const char* method,
-                               int8_t rssi, uint8_t ch, const char* ssid,
-                               uint8_t confidence) {
-  char ssidEsc[sizeof(((FYDetection*)0)->ssid) * 6 + 1];
+static void emitDetectionJSON(const char *mac, const char *method,
+                              int8_t rssi, uint8_t ch, const char *ssid,
+                              uint8_t confidence)
+{
+  char ssidEsc[sizeof(((FYDetection *)0)->ssid) * 6 + 1];
   jsonEscape(ssidEsc, sizeof(ssidEsc), ssid ? ssid : "");
   char oui[9];
   uint8_t mbytes[6] = {0};
@@ -1485,7 +1730,7 @@ static void emitDetectionJSON(const char* mac, const char* method,
   ouiFromMac(mbytes, oui, sizeof(oui));
 
   // Locally-administered MAC: OUI field is meaningless, tag it clearly
-  const char* ouiStr = (mbytes[0] & 0x02) ? "laa" : oui;
+  const char *ouiStr = (mbytes[0] & 0x02) ? "laa" : oui;
 
   // BLE-only detections (method starts with "ble_") have no WiFi channel/
   // frequency/OUI concept — tag detection_method/protocol/oui accordingly
@@ -1512,59 +1757,76 @@ static void emitDetectionJSON(const char* mac, const char* method,
       ssidEsc, (unsigned)confidence);
 }
 
-
 // ============================================================
 // PROMISCUOUS CALLBACK  — keep it fast, no Serial, no malloc
 // ============================================================
 
-static bool IRAM_ATTR extractSsidFromMgmtBody(const uint8_t* body, int len,
-                                     char* outSsid, size_t outLen) {
-  if (!body || len <= 0 || !outSsid || outLen == 0) return false;
-  while (len >= 2) {
+static bool IRAM_ATTR extractSsidFromMgmtBody(const uint8_t *body, int len,
+                                              char *outSsid, size_t outLen)
+{
+  if (!body || len <= 0 || !outSsid || outLen == 0)
+    return false;
+  while (len >= 2)
+  {
     uint8_t id = body[0], elen = body[1];
-    if ((int)elen + 2 > len) break;
-    if (id == 0) {
+    if ((int)elen + 2 > len)
+      break;
+    if (id == 0)
+    {
       size_t n = (elen < (outLen - 1)) ? elen : (outLen - 1);
       memcpy(outSsid, body + 2, n);
       outSsid[n] = '\0';
       return true;
     }
-    body += elen + 2; len -= elen + 2;
+    body += elen + 2;
+    len -= elen + 2;
   }
   return false;
 }
 
-static int IRAM_ATTR isWildcardProbeIE(const uint8_t* body, int len) {
-  if (!body || len < 2) return -1;
-  while (len >= 2) {
-    uint8_t id   = body[0];
+static int IRAM_ATTR isWildcardProbeIE(const uint8_t *body, int len)
+{
+  if (!body || len < 2)
+    return -1;
+  while (len >= 2)
+  {
+    uint8_t id = body[0];
     uint8_t elen = body[1];
-    if ((int)elen + 2 > len) break;
-    if (id == 0) return (elen == 0) ? 1 : 0;
+    if ((int)elen + 2 > len)
+      break;
+    if (id == 0)
+      return (elen == 0) ? 1 : 0;
     body += elen + 2;
-    len  -= elen + 2;
+    len -= elen + 2;
   }
   return -1;
 }
 
-static void IRAM_ATTR wifiSniffer(void* buf, wifi_promiscuous_pkt_type_t type) {
-  if (!buf || sniffingStopped) return;
+static void IRAM_ATTR wifiSniffer(void *buf, wifi_promiscuous_pkt_type_t type)
+{
+  if (!buf || sniffingStopped)
+    return;
 
 #if PROCESS_MGMT_FRAMES && PROCESS_DATA_FRAMES
-  if (type != WIFI_PKT_MGMT && type != WIFI_PKT_DATA) return;
+  if (type != WIFI_PKT_MGMT && type != WIFI_PKT_DATA)
+    return;
 #elif PROCESS_MGMT_FRAMES
-  if (type != WIFI_PKT_MGMT) return;
+  if (type != WIFI_PKT_MGMT)
+    return;
 #elif PROCESS_DATA_FRAMES
-  if (type != WIFI_PKT_DATA) return;
+  if (type != WIFI_PKT_DATA)
+    return;
 #else
   return;
 #endif
 
-  wifi_promiscuous_pkt_t*   pkt = (wifi_promiscuous_pkt_t*)buf;
-  if (pkt->rx_ctrl.sig_len < sizeof(wifi_ieee80211_mac_hdr_t)) return;
-  wifi_ieee80211_mac_hdr_t* hdr = (wifi_ieee80211_mac_hdr_t*)pkt->payload;
+  wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
+  if (pkt->rx_ctrl.sig_len < sizeof(wifi_ieee80211_mac_hdr_t))
+    return;
+  wifi_ieee80211_mac_hdr_t *hdr = (wifi_ieee80211_mac_hdr_t *)pkt->payload;
   int8_t rssi = pkt->rx_ctrl.rssi;
-  if (rssi < RSSI_MIN) return;
+  if (rssi < RSSI_MIN)
+    return;
   uint8_t ch = (uint8_t)pkt->rx_ctrl.channel;
 
 #if TESTING_MODE
@@ -1578,24 +1840,29 @@ static void IRAM_ATTR wifiSniffer(void* buf, wifi_promiscuous_pkt_type_t type) {
   // SoundThinking/ShotSpotter:          ALERT_SOUNDTHINKING, score=35, chirps.
   {
     bool isHigh = matchFlockHighOui(hdr->addr2);
-    bool isMfr  = !isHigh && matchFlockMfrOui(hdr->addr2);
-    bool isST   = !isHigh && !isMfr && matchSoundThinkingOui(hdr->addr2);
+    bool isMfr = !isHigh && matchFlockMfrOui(hdr->addr2);
+    bool isST = !isHigh && !isMfr && matchSoundThinkingOui(hdr->addr2);
 
-    if (isHigh || isMfr || isST) {
+    if (isHigh || isMfr || isST)
+    {
       bool emitted = false;
       // Wildcard probe check: Flock cameras (high + mfr OUI) emit empty-SSID probes.
       // SoundThinking sensors do not send this probe pattern — skip for them.
-      if ((isHigh || isMfr) && type == WIFI_PKT_MGMT) {
-        uint8_t fc0     = hdr->frame_ctrl & 0xFF;
-        uint8_t ftype   = (fc0 >> 2) & 0x03;
+      if ((isHigh || isMfr) && type == WIFI_PKT_MGMT)
+      {
+        uint8_t fc0 = hdr->frame_ctrl & 0xFF;
+        uint8_t ftype = (fc0 >> 2) & 0x03;
         uint8_t subtype = (fc0 >> 4) & 0x0F;
-        if (ftype == 0 && subtype == 4) {   // Probe Request
-          int sigLen  = (int)pkt->rx_ctrl.sig_len;
+        if (ftype == 0 && subtype == 4)
+        { // Probe Request
+          int sigLen = (int)pkt->rx_ctrl.sig_len;
           int bodyLen = sigLen - (int)sizeof(wifi_ieee80211_mac_hdr_t);
-          const uint8_t* body = pkt->payload + sizeof(wifi_ieee80211_mac_hdr_t);
+          const uint8_t *body = pkt->payload + sizeof(wifi_ieee80211_mac_hdr_t);
           int r = (bodyLen > 0) ? isWildcardProbeIE(body, bodyLen) : -1;
-          if (r == -1 && bodyLen > 4) r = isWildcardProbeIE(body, bodyLen - 4);
-          if (r == 1) {
+          if (r == -1 && bodyLen > 4)
+            r = isWildcardProbeIE(body, bodyLen - 4);
+          if (r == 1)
+          {
             uint8_t conf = computeConfidence(ALERT_WILDCARD_PROBE, hdr->addr2, rssi, nullptr);
             uint8_t pairCh = 0;
             if (checkSeqMac(hdr->addr2, ch, &pairCh))
@@ -1606,9 +1873,10 @@ static void IRAM_ATTR wifiSniffer(void* buf, wifi_promiscuous_pkt_type_t type) {
           }
         }
       }
-      if (!emitted) {
-        AlertType atype = isST  ? ALERT_SOUNDTHINKING :
-                          isMfr ? ALERT_OUI_MFR       : ALERT_OUI_ADDR2;
+      if (!emitted)
+      {
+        AlertType atype = isST ? ALERT_SOUNDTHINKING : isMfr ? ALERT_OUI_MFR
+                                                             : ALERT_OUI_ADDR2;
         uint8_t conf = computeConfidence(atype, hdr->addr2, rssi, nullptr);
         uint8_t pairCh = 0;
         if (checkSeqMac(hdr->addr2, ch, &pairCh))
@@ -1622,7 +1890,8 @@ static void IRAM_ATTR wifiSniffer(void* buf, wifi_promiscuous_pkt_type_t type) {
   // Catches cameras in burst-sleep: they appear as *dst* of probe responses
   // even when not transmitting.  Multicast guard is mandatory.
 #if CHECK_ADDR1
-  if (!isMulticast(hdr->addr1) && matchOuiRaw(hdr->addr1)) {
+  if (!isMulticast(hdr->addr1) && matchOuiRaw(hdr->addr1))
+  {
     uint8_t conf = computeConfidence(ALERT_OUI_ADDR1, hdr->addr1, rssi, nullptr);
     enqueueAlert(ALERT_OUI_ADDR1, hdr->addr1, rssi, ch, nullptr, "addr1", conf);
   }
@@ -1630,7 +1899,8 @@ static void IRAM_ATTR wifiSniffer(void* buf, wifi_promiscuous_pkt_type_t type) {
 
   // ── addr3 (BSSID) OUI match — fallback for addr2-randomised frames ─────────
 #if CHECK_ADDR3
-  if (type == WIFI_PKT_MGMT && !isMulticast(hdr->addr3) && matchOuiRaw(hdr->addr3)) {
+  if (type == WIFI_PKT_MGMT && !isMulticast(hdr->addr3) && matchOuiRaw(hdr->addr3))
+  {
     uint8_t conf = computeConfidence(ALERT_OUI_ADDR3, hdr->addr3, rssi, nullptr);
     enqueueAlert(ALERT_OUI_ADDR3, hdr->addr3, rssi, ch, nullptr, "addr3", conf);
   }
@@ -1651,46 +1921,57 @@ static void IRAM_ATTR wifiSniffer(void* buf, wifi_promiscuous_pkt_type_t type) {
   //   subtype 5  = Probe Response (reply to our 2.4/5 GHz probes)
   //   subtype 4  = Probe Request  (camera scanning for an upstream AP)
 #if ENABLE_SSID_MATCH
-  if (type == WIFI_PKT_MGMT) {
-    uint8_t fc0     = hdr->frame_ctrl & 0xFF;
+  if (type == WIFI_PKT_MGMT)
+  {
+    uint8_t fc0 = hdr->frame_ctrl & 0xFF;
     uint8_t subtype = (fc0 >> 4) & 0x0F;
-    uint8_t ftype   = (fc0 >> 2) & 0x03;
+    uint8_t ftype = (fc0 >> 2) & 0x03;
 
-    if (ftype == 0) {
-      int sigLen = pkt->rx_ctrl.sig_len - 4;   // strip FCS
-      if (sigLen < (int)sizeof(wifi_ieee80211_mac_hdr_t)) goto ssid_done;
+    if (ftype == 0)
+    {
+      int sigLen = pkt->rx_ctrl.sig_len - 4; // strip FCS
+      if (sigLen < (int)sizeof(wifi_ieee80211_mac_hdr_t))
+        goto ssid_done;
 
-      const uint8_t* mgmtBody    = nullptr;
-      int            mgmtBodyLen = 0;
-      const char*    frameKind   = nullptr;
+      const uint8_t *mgmtBody = nullptr;
+      int mgmtBodyLen = 0;
+      const char *frameKind = nullptr;
 
-      if (subtype == 8 || subtype == 5) {
+      if (subtype == 8 || subtype == 5)
+      {
         // Beacon / Probe Response: 12-byte fixed params before IEs
         int off = sizeof(wifi_ieee80211_mac_hdr_t) + 12;
-        if (sigLen > off) {
-          frameKind   = (subtype == 8) ? "beacon" : "probe_resp";
-          mgmtBody    = pkt->payload + off;
+        if (sigLen > off)
+        {
+          frameKind = (subtype == 8) ? "beacon" : "probe_resp";
+          mgmtBody = pkt->payload + off;
           mgmtBodyLen = sigLen - off;
         }
-      } else if (subtype == 4) {
+      }
+      else if (subtype == 4)
+      {
         // Probe Request: IEs follow directly after MAC header
         int off = sizeof(wifi_ieee80211_mac_hdr_t);
-        if (sigLen > off) {
-          frameKind   = "probe_req";
-          mgmtBody    = pkt->payload + off;
+        if (sigLen > off)
+        {
+          frameKind = "probe_req";
+          mgmtBody = pkt->payload + off;
           mgmtBodyLen = sigLen - off;
         }
       }
 
-      if (mgmtBody && mgmtBodyLen > 0) {
+      if (mgmtBody && mgmtBodyLen > 0)
+      {
         char ssid[33] = {0};
-        if (extractSsidFromMgmtBody(mgmtBody, mgmtBodyLen, ssid, sizeof(ssid))
-            && ssid[0] != '\0') {
+        if (extractSsidFromMgmtBody(mgmtBody, mgmtBodyLen, ssid, sizeof(ssid)) && ssid[0] != '\0')
+        {
 
-          if (matchSsidKeyword(ssid)) {
+          if (matchSsidKeyword(ssid))
+          {
             bool laa = (hdr->addr2[0] & 0x02) != 0;
 
-            if (laa) {
+            if (laa)
+            {
               // ── ALERT_LAA_SSID: LAA MAC + Flock SSID ───────────────────────
               // This is the primary path for issue-#43 "Flock Camera net."
               // cameras.  Run sequential-MAC check for the :DE/:DF pair bonus.
@@ -1700,7 +1981,9 @@ static void IRAM_ATTR wifiSniffer(void* buf, wifi_promiscuous_pkt_type_t type) {
                 conf = applySeqMacBonus(conf);
               enqueueAlert(ALERT_LAA_SSID, hdr->addr2, rssi, ch,
                            ssid, frameKind, conf);
-            } else {
+            }
+            else
+            {
               // Globally-administered MAC with Flock SSID (fully deployed cam)
               uint8_t conf = computeConfidence(ALERT_SSID, hdr->addr2, rssi, ssid);
               enqueueAlert(ALERT_SSID, hdr->addr2, rssi, ch,
@@ -1711,7 +1994,7 @@ static void IRAM_ATTR wifiSniffer(void* buf, wifi_promiscuous_pkt_type_t type) {
       }
     }
   }
-  ssid_done: ;
+ssid_done:;
 #endif
 }
 
@@ -1719,28 +2002,36 @@ static void IRAM_ATTR wifiSniffer(void* buf, wifi_promiscuous_pkt_type_t type) {
 // DRAIN QUEUE
 // ============================================================
 
-static void drainAlertQueue() {
-  while (true) {
+static void drainAlertQueue()
+{
+  while (true)
+  {
     portENTER_CRITICAL(&queueMux);
-    if (alertTail == alertHead) { portEXIT_CRITICAL(&queueMux); break; }
+    if (alertTail == alertHead)
+    {
+      portEXIT_CRITICAL(&queueMux);
+      break;
+    }
     AlertEntry e;
-    memcpy(&e, (const void*)&alertQueue[alertTail], sizeof(AlertEntry));
+    memcpy(&e, (const void *)&alertQueue[alertTail], sizeof(AlertEntry));
     alertTail = (alertTail + 1) % ALERT_QUEUE_SIZE;
     portEXIT_CRITICAL(&queueMux);
 
     char macStr[18];
     macToStr(e.mac, macStr, sizeof(macStr));
-    const char* method = alertTypeToMethod(e.type);
+    const char *method = alertTypeToMethod(e.type);
 
     bool chirpWorthy = false;
     int idx = fyAddDetection(macStr, method, e.rssi, e.channel,
                              (e.type == ALERT_SSID || e.type == ALERT_LAA_SSID)
-                               ? e.ssid : nullptr,
+                                 ? e.ssid
+                                 : nullptr,
                              e.confidence, &chirpWorthy);
 
     fyLastTargetSeen = millis();
 
-    if (shouldSuppressDuplicate(macStr)) continue;
+    if (shouldSuppressDuplicate(macStr))
+      continue;
 
     char oui[9];
     ouiFromMac(e.mac, oui, sizeof(oui));
@@ -1748,20 +2039,25 @@ static void drainAlertQueue() {
     // Human-readable line
     bool isBleAlert = (e.type == ALERT_BLE_MFR_ID || e.type == ALERT_BLE_RAVEN_UUID ||
                        e.type == ALERT_BLE_NAME);
-    if (e.type == ALERT_SSID || e.type == ALERT_LAA_SSID) {
-      const char* tag = (e.type == ALERT_LAA_SSID) ? "DETECT-LAA-SSID" : "DETECT-SSID";
+    if (e.type == ALERT_SSID || e.type == ALERT_LAA_SSID)
+    {
+      const char *tag = (e.type == ALERT_LAA_SSID) ? "DETECT-LAA-SSID" : "DETECT-SSID";
       dualPrintf("[flockyou] %s type=%s mac=%s ssid=\"%s\" rssi=%d ch=%u conf=%u count=%d\n",
                  tag, e.frameKind, macStr, e.ssid, e.rssi, e.channel,
                  (unsigned)e.confidence,
                  (idx >= 0) ? (int)fyDet[idx].count : 0);
-    } else if (isBleAlert) {
+    }
+    else if (isBleAlert)
+    {
       // Dedicated BLE log line -- omits the meaningless WiFi channel field
       // (BLE has no 802.11 channel concept) and labels the method plainly.
       dualPrintf("[flockyou] DETECT-BLE method=%s addr=%s rssi=%d conf=%u count=%d\n",
                  method, macStr, e.rssi,
                  (unsigned)e.confidence,
                  (idx >= 0) ? (int)fyDet[idx].count : 0);
-    } else {
+    }
+    else
+    {
       dualPrintf("[flockyou] DETECT-OUI mac=%s oui=%s rssi=%d ch=%u addr=%s conf=%u count=%d\n",
                  macStr, oui, e.rssi, e.channel,
                  e.frameKind[0] ? e.frameKind : "addr2",
@@ -1772,7 +2068,8 @@ static void drainAlertQueue() {
     // Flask JSON
     emitDetectionJSON(macStr, method, e.rssi, e.channel,
                       (e.type == ALERT_SSID || e.type == ALERT_LAA_SSID)
-                        ? e.ssid : "",
+                          ? e.ssid
+                          : "",
                       e.confidence);
 
     // PR#39: only chirp and LED flash for detections at or above CHIRP_MIN_CONFIDENCE.
@@ -1786,13 +2083,15 @@ static void drainAlertQueue() {
     // corresponding new detection. heartbeatBeep() itself is kept (still
     // used as a button-press acknowledgement sound, see HAS_SIMPLE_BUTTON
     // in loop()), only its unconditional periodic trigger was deleted.
-    if (chirpWorthy && e.confidence >= CHIRP_MIN_CONFIDENCE) {
+    if (chirpWorthy && e.confidence >= CHIRP_MIN_CONFIDENCE)
+    {
       newDetectChirp();
     }
 
-    if (e.confidence >= CHIRP_MIN_CONFIDENCE) {
+    if (e.confidence >= CHIRP_MIN_CONFIDENCE)
+    {
       ledFlash(LED_FLASH_MS);
-      maybeLockChannel(e);   // hold this channel while the camera is still audible
+      maybeLockChannel(e); // hold this channel while the camera is still audible
     }
 
     // Publish this detection to the UI task (ui_task.h) instead of calling
@@ -1801,11 +2100,12 @@ static void drainAlertQueue() {
     // may access now. The UI task renders the alert screen on its next poll
     // (~50 ms), independent of WiFi/BLE scanning.
     {
-      const char* dispType = (e.type == ALERT_SSID || e.type == ALERT_LAA_SSID)
-                             ? "SSID"
-                             : (isBleAlert ? "BLE" : "OUI");
-      const char* ssidArg  = (e.type == ALERT_SSID || e.type == ALERT_LAA_SSID)
-                             ? e.ssid : "";
+      const char *dispType = (e.type == ALERT_SSID || e.type == ALERT_LAA_SSID)
+                                 ? "SSID"
+                                 : (isBleAlert ? "BLE" : "OUI");
+      const char *ssidArg = (e.type == ALERT_SSID || e.type == ALERT_LAA_SSID)
+                                ? e.ssid
+                                : "";
       uiPublishAlert(method, macStr, e.confidence, e.rssi, e.channel, ssidArg,
                      fyDetCount,
                      (fyLastTargetSeen > 0) ? millis() - fyLastTargetSeen : 0UL,
@@ -1813,10 +2113,12 @@ static void drainAlertQueue() {
     }
 
 #if STOP_ON_OUI_HIT
-    if (e.type != ALERT_SSID && e.type != ALERT_LAA_SSID) stopSniffing("OUI hit");
+    if (e.type != ALERT_SSID && e.type != ALERT_LAA_SSID)
+      stopSniffing("OUI hit");
 #endif
 #if STOP_ON_SSID_HIT
-    if (e.type == ALERT_SSID || e.type == ALERT_LAA_SSID) stopSniffing("SSID hit");
+    if (e.type == ALERT_SSID || e.type == ALERT_LAA_SSID)
+      stopSniffing("SSID hit");
 #endif
   }
 }
@@ -1825,9 +2127,12 @@ static void drainAlertQueue() {
 // AUTOSAVE / HEARTBEAT / LED TICKS
 // ============================================================
 
-static void autosaveTick() {
-  if (!fySpiffsReady || !fyDirty) return;
-  if (millis() - fyLastSaveAt < AUTOSAVE_INTERVAL_MS) return;
+static void autosaveTick()
+{
+  if (!fySpiffsReady || !fyDirty)
+    return;
+  if (millis() - fyLastSaveAt < AUTOSAVE_INTERVAL_MS)
+    return;
   fySaveSession();
 }
 
@@ -1841,7 +2146,8 @@ static void autosaveTick() {
 // SETUP / LOOP
 // ============================================================
 
-void setup() {
+void setup()
+{
   Serial.begin(115200);
   delay(300);
 
@@ -1921,32 +2227,38 @@ void setup() {
     // callback mechanism -- it's a harmless duplicate of the same writes on
     // a correctly-detected unit, and the actual fix on a misdetected one.
     auto spk_cfg = M5.Speaker.config();
-    spk_cfg.pin_bck       = GPIO_NUM_17;
-    spk_cfg.pin_ws        = GPIO_NUM_3;
-    spk_cfg.pin_data_out  = GPIO_NUM_48;
+    spk_cfg.pin_bck = GPIO_NUM_17;
+    spk_cfg.pin_ws = GPIO_NUM_3;
+    spk_cfg.pin_data_out = GPIO_NUM_48;
     spk_cfg.magnification = 1;
-    spk_cfg.i2s_port      = I2S_NUM_1;
+    spk_cfg.i2s_port = I2S_NUM_1;
     M5.Speaker.config(spk_cfg);
 
-    M5.In_I2C.begin(I2C_NUM_1, /*sda*/GPIO_NUM_45, /*scl*/GPIO_NUM_0);
+    M5.In_I2C.begin(I2C_NUM_1, /*sda*/ GPIO_NUM_45, /*scl*/ GPIO_NUM_0);
     static constexpr uint8_t ES8311_I2C_ADDR = 0x18;
-    static constexpr struct { uint8_t reg, val; } es8311EnableRegs[] = {
-      {0x00, 0x80}, // RESET / CSM power on
-      {0x01, 0xB5}, // CLOCK_MANAGER / MCLK=BCLK
-      {0x02, 0x18}, // CLOCK_MANAGER / MULT_PRE=3
-      {0x0D, 0x01}, // SYSTEM / power up analog circuitry
-      {0x12, 0x00}, // SYSTEM / power-up DAC (not the chip's default)
-      {0x13, 0x10}, // SYSTEM / enable output to HP drive (not the default)
-      {0x32, 0xFF}, // DAC / full volume
-      {0x37, 0x08}, // DAC / bypass DAC equalizer (not the default)
+    static constexpr struct
+    {
+      uint8_t reg, val;
+    } es8311EnableRegs[] = {
+        {0x00, 0x80}, // RESET / CSM power on
+        {0x01, 0xB5}, // CLOCK_MANAGER / MCLK=BCLK
+        {0x02, 0x18}, // CLOCK_MANAGER / MULT_PRE=3
+        {0x0D, 0x01}, // SYSTEM / power up analog circuitry
+        {0x12, 0x00}, // SYSTEM / power-up DAC (not the chip's default)
+        {0x13, 0x10}, // SYSTEM / enable output to HP drive (not the default)
+        {0x32, 0xFF}, // DAC / full volume
+        {0x37, 0x08}, // DAC / bypass DAC equalizer (not the default)
     };
     bool codecI2cOk = true;
-    for (auto &r : es8311EnableRegs) {
-      if (!M5.In_I2C.writeRegister8(ES8311_I2C_ADDR, r.reg, r.val, 100000)) {
+    for (auto &r : es8311EnableRegs)
+    {
+      if (!M5.In_I2C.writeRegister8(ES8311_I2C_ADDR, r.reg, r.val, 100000))
+      {
         codecI2cOk = false;
       }
     }
-    if (!codecI2cOk) {
+    if (!codecI2cOk)
+    {
       dualPrintln("[flockyou] ERROR: ES8311 codec I2C init failed - speaker will not produce sound");
     }
     // NS4150B Class-D amp enable pin -- matches GPIO18 toggled by
@@ -1961,7 +2273,8 @@ void setup() {
     // with zero trace. Call begin() explicitly here and log a failure so
     // it shows up in serial output instead of just "the speaker doesn't do
     // anything".
-    if (!M5.Speaker.begin()) {
+    if (!M5.Speaker.begin())
+    {
       dualPrintln("[flockyou] ERROR: M5.Speaker.begin() failed - speaker will not produce sound");
     }
     M5.Speaker.setVolume(200);
@@ -1978,15 +2291,14 @@ void setup() {
   }
 #endif
 
-
 #if defined(USE_M5ATOM_VOICE)
   {
     auto m5cfg = M5.config();
     M5.begin(m5cfg);
     auto spk_cfg = M5.Speaker.config();
     spk_cfg.pin_data_out = 22;
-    spk_cfg.pin_bck      = 19;
-    spk_cfg.pin_ws       = 33;
+    spk_cfg.pin_bck = 19;
+    spk_cfg.pin_ws = 33;
     M5.Speaker.config(spk_cfg);
     M5.Speaker.begin();
     M5.Speaker.setVolume(220);
@@ -2002,25 +2314,30 @@ void setup() {
   // Storage selection MUST happen before the scanning screen is drawn,
   // otherwise the user sees the scanning UI flash first.
   StorageResult st = storageBootMenu();
-  if (!fyInitStorage(st)) {
+  if (!fyInitStorage(st))
+  {
     dualPrintln("[flockyou] storage init FAILED — running without persistence");
   }
 
-  if (st.choice == StorageChoice::Sd && gStorageReady) {
-    if (!fyTestSdWrite()) {
+  if (st.choice == StorageChoice::Sd && gStorageReady)
+  {
+    if (!fyTestSdWrite())
+    {
       dualPrintln("[flockyou] SD write test failed — card may not be FAT32.");
       dualPrintln("[flockyou] Falling back to SPIFFS.");
       gStorageChoice = StorageChoice::Spiffs;
       gStorageReady = SPIFFS.begin(true);
       st.choice = StorageChoice::Spiffs;
-      notify("Write FAILED.\nUsing SPIFFS.");
+      notify("Write FAILED.\n\nUsing SPIFFS.");
     }
   }
 
-  if (gStorageReady) {
+  if (gStorageReady)
+  {
     fySpiffsReady = true;
     dualPrintf("[flockyou] storage ready: %s\n", fyStorageLabel());
-    if (st.choice == StorageChoice::Sd && st.sdMounted) {
+    if (st.choice == StorageChoice::Sd && st.sdMounted)
+    {
       dualPrintln("[flockyou] SD verified writable");
     }
     fyPromotePrevSession();
@@ -2040,7 +2357,6 @@ void setup() {
                    millis(), false,
                    (int)FY_OUI_HIGH_COUNT, (int)FY_OUI_MFR_COUNT);
 #endif
-
 
 #if MIRROR_SERIAL && !defined(USE_M5ATOM) && !defined(USE_M5ATOM_VOICES3R) && !defined(USE_M5BASIC) && !defined(USE_M5STICKC_PLUS_SE)
   Serial1.begin(MIRROR_BAUD, SERIAL_8N1, -1, MIRROR_TX_PIN);
@@ -2117,12 +2433,12 @@ void setup() {
   applyInitialChannel();
 
   wifi_promiscuous_filter_t filt = {
-    .filter_mask = 0
+      .filter_mask = 0
 #if PROCESS_MGMT_FRAMES
-        | WIFI_PROMIS_FILTER_MASK_MGMT
+                     | WIFI_PROMIS_FILTER_MASK_MGMT
 #endif
 #if PROCESS_DATA_FRAMES
-        | WIFI_PROMIS_FILTER_MASK_DATA
+                     | WIFI_PROMIS_FILTER_MASK_DATA
 #endif
   };
   esp_wifi_set_promiscuous_filter(&filt);
@@ -2133,7 +2449,7 @@ void setup() {
 #if defined(ENABLE_BLE_SCAN) && ENABLE_BLE_SCAN
   dualPrintln("[flockyou] BLE init...");
   initBLE();
-  g_bleNextScan = millis() + 5000;  // first BLE scan 5 s after boot
+  g_bleNextScan = millis() + 5000; // first BLE scan 5 s after boot
   dualPrintln("[flockyou] BLE scanner init OK");
 #if defined(BLE_SELF_TEST) && BLE_SELF_TEST
   bleSelfTestInit();
@@ -2151,26 +2467,27 @@ void setup() {
   dualPrintln("[flockyou] v2 WiFi detector started");
   dualPrintf("[flockyou] mode=%s dwell_ms=%u start_ch=%u rssi_min=%d spiffs=%d"
 #if defined(ENABLE_BLE_SCAN) && ENABLE_BLE_SCAN
-  #if defined(BLE_COEX_MODE) && BLE_COEX_MODE
+#if defined(BLE_COEX_MODE) && BLE_COEX_MODE
              " ble=COEX(continuous)"
-  #else
+#else
              " ble=ON(time-mux) corr_win=%lus"
-  #endif
+#endif
 #endif
              "\n",
              channelModeName(), CHANNEL_DWELL_MS, currentChannel,
              RSSI_MIN, fySpiffsReady ? 1 : 0
 #if defined(ENABLE_BLE_SCAN) && ENABLE_BLE_SCAN && !(defined(BLE_COEX_MODE) && BLE_COEX_MODE)
-             , (unsigned long)(BLE_CORR_WINDOW_MS / 1000)
+             ,
+             (unsigned long)(BLE_CORR_WINDOW_MS / 1000)
 #endif
-             );
+  );
   dualPrintf("[flockyou] OUIs: high=%u mfr=%u st=%u | SSID_KW=%u seqSlots=%u chirpMin=%d\n",
              (unsigned)FY_OUI_HIGH_COUNT, (unsigned)FY_OUI_MFR_COUNT,
              (unsigned)FY_OUI_ST_COUNT, (unsigned)SSID_KEYWORD_COUNT,
              (unsigned)SEQ_MAC_TABLE_SIZE, (int)CHIRP_MIN_CONFIDENCE);
 
   lastHeartbeat = millis();
-  fyLastSaveAt  = millis();
+  fyLastSaveAt = millis();
 
   // Force immediate scanning screen — clears splash without waiting 30 s
   // for the first printHeartbeat() heartbeat tick.
@@ -2193,7 +2510,8 @@ void setup() {
   startUiTask();
 }
 
-void loop() {
+void loop()
+{
   updateChannelMode();
   drainAlertQueue();
   autosaveTick();
@@ -2208,7 +2526,6 @@ void loop() {
 #endif
 #endif
 
-
 #if defined(USE_M5BASIC) || defined(USE_M5STICKC_PLUS_SE)
   // Button presses are now detected on the UI task (ui_task.h) — it is the
   // only task allowed to touch M5Unified (M5.update()/M5.BtnX) since that
@@ -2219,9 +2536,13 @@ void loop() {
   // tick are handled entirely inside the UI task and need no feedback here.
   {
     uint8_t btn = uiTakeButtonAction();
-    if (btn == 1) {
-      fySaveSession(); Serial.println("[flockyou] Manual save (button)");
-    } else if (btn == 3) {
+    if (btn == 1)
+    {
+      fySaveSession();
+      Serial.println("[flockyou] Manual save (button)");
+    }
+    else if (btn == 3)
+    {
       customChannelIndex = (customChannelIndex + 1) % customChannelCount;
       currentChannel = customChannels[customChannelIndex];
       esp_wifi_set_channel(currentChannel, WIFI_SECOND_CHAN_NONE);
@@ -2231,12 +2552,12 @@ void loop() {
   }
 #endif
 
-
 #if defined(HAS_SIMPLE_BUTTON)
   // Single bare-GPIO button (Atom Lite/Echo/Voice/VoiceS3R, T-Dongle C5).
   // Press = force immediate channel hop + save session + short ack
   // (beep on buzzer/speaker-equipped boards, LED flash on LED-equipped boards).
-  if (simpleButtonPressed()) {
+  if (simpleButtonPressed())
+  {
     fySaveSession();
     customChannelIndex = (customChannelIndex + 1) % customChannelCount;
     currentChannel = customChannels[customChannelIndex];
@@ -2257,4 +2578,3 @@ void loop() {
 
   delay(1);
 }
-
