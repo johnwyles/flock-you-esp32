@@ -63,6 +63,10 @@
   #include "m5basic_display.h"
 #endif
 
+// Storage abstraction: unified SD/SPIFFS selection menu + file API
+#include "storage_select.h"
+#include "storage_backend.h"
+
 // M5StickC Plus SE — ST7789v2 1.14" display (240×135 landscape)
 #if defined(USE_M5STICKC_PLUS_SE)
   #include "m5stickc_display.h"
@@ -2051,15 +2055,21 @@ void setup() {
   // SPIFFS driver logs "mount failed, -10025" before auto-formatting.
   // The error is cosmetic — SPIFFS.begin(true) handles it silently after this.
   esp_log_level_set("SPIFFS", ESP_LOG_NONE);
-  bool spiffsOk = SPIFFS.begin(true);
-  esp_log_level_set("SPIFFS", ESP_LOG_WARN);
-  if (spiffsOk) {
-    fySpiffsReady = true;
-    dualPrintln("[flockyou] SPIFFS ready");
-    fyPromotePrevSession();
-  } else {
-    dualPrintln("[flockyou] SPIFFS init FAILED — running without persistence");
+
+  // Storage selection menu / unified backend init
+  StorageResult st = storageBootMenu();
+  if (!fyInitStorage(st)) {
+    dualPrintln("[flockyou] storage init FAILED — running without persistence");
   }
+  if (gStorageReady) {
+    fySpiffsReady = true;
+    dualPrintf("[flockyou] storage ready: %s\n", fyStorageLabel());
+    if (st.choice == StorageChoice::Sd && st.sdMounted) {
+      if (st.sdFormatted) dualPrintln("[flockyou] SD formatted");
+    }
+    fyPromotePrevSession();
+  }
+  esp_log_level_set("SPIFFS", ESP_LOG_WARN);
 
   // ------------------------------------------------------------------
   // WiFi promiscuous init MUST happen BEFORE BLE controller init.
