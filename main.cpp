@@ -2576,5 +2576,16 @@ void loop()
   }
 #endif
 
+  // Serial command: inject fake detection for save testing
+  if (Serial.available()) {
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
+    if (cmd.equalsIgnoreCase("CMD:FAKE")) {
+      uint8_t fakeMac[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
+      enqueueAlert(ALERT_OUI_ADDR2, fakeMac, -45, 1, nullptr, "test", 75);
+      Serial.println("[flockyou] Fake detection injected");
+    }
+  }
+
   delay(1);
 }
