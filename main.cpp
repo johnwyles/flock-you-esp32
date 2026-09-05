@@ -22,6 +22,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include "esp_wifi.h"
+#include "esp_mac.h"
 #include <ctype.h>
 #include <string.h>
 #include <SPIFFS.h>
@@ -862,6 +863,8 @@ typedef struct
 } FYDetection;
 
 static FYDetection fyDet[MAX_DETECTIONS];
+static uint8_t gDeviceMac[6];
+static uint8_t gFakeMacCounter = 0;
 static int fyDetCount = 0;
 static bool fySpiffsReady = false;
 static bool fyDirty = false;
