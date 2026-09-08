@@ -527,3 +527,34 @@ This project is licensed **CC-BY-SA 4.0**:
 
 *Built with love for privacy, security, and open knowledge.*  
 *Detect. Document. DeFlock.*
+
+## WiFi Credentials
+
+**Never check WiFi passwords into git.** The ESP32 firmware uses compiled-in defaults. Custom credentials are uploaded at runtime.
+
+### Default AP
+- SSID: `flock-you`
+- Password: `flockyou`
+- IP: `192.168.4.1`
+
+### Upload custom credentials (optional)
+
+Upload a `config.json` file to the ESP32 filesystem via mpremote:
+
+```bash
+echo '{"ssid":"my-ssid","password":"mypassword"}' | \
+  /tmp/mpvenv/bin/mpremote connect /dev/ttyACM0 fs cp :config.json
+```
+
+The ESP32 webserver will read `/config.json` on startup if present.
+
+### Host-side Flask backend
+
+The Flask backend reads `.env` for its own network configuration:
+
+```bash
+cp .env.example .env
+# Edit .env with your real WiFi credentials
+```
+
+`.env` is gitignored. `.env.example` is committed as a template.

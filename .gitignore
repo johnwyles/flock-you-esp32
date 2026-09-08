@@ -27,3 +27,4 @@ prev_session.json
 # Local WiFi credentials — do not commit
 .env
 .env.local
+config.json
