@@ -2220,8 +2220,58 @@ static void autosaveTick()
 // SETUP / LOOP
 // ============================================================
 
-void setup()
-{
+// Draw recent detections list on M5Stack Basic display
+void m5basicDrawDetList() {
+    M5.Display.fillRect(0, MB_HDR_H, MB_W, MB_BTN_Y - MB_HDR_H, MB_BLACK);
+    M5.Display.setTextSize(1);
+    M5.Display.setTextColor(MB_WHITE, MB_BLACK);
+    M5.Display.setCursor(8, MB_HDR_H + 4);
+    M5.Display.printf("Recent Detections (%d total)", fyDetCount);
+    M5.Display.drawFastHLine(0, MB_HDR_H + 16, MB_W, MB_DK_GREY);
+
+    int start = max(0, fyDetCount - 10);
+    int y = MB_HDR_H + 22;
+    for (int i = fyDetCount - 1; i >= start; i--) {
+        if (y > MB_BTN_Y - 12) break;
+        char line[48];
+        snprintf(line, sizeof(line), "%s rssi=%d ch=%u conf=%u",
+                 fyDet[i].mac, fyDet[i].rssi,
+                 (unsigned)fyDet[i].channel, (unsigned)fyDet[i].maxConfidence);
+        M5.Display.setCursor(4, y);
+        M5.Display.print(line);
+        y += 11;
+        if (strlen(fyDet[i].ssid) > 0 && y < MB_BTN_Y - 12) {
+            M5.Display.setTextColor(MB_CYAN, MB_BLACK);
+            snprintf(line, sizeof(line), "  SSID: %s", fyDet[i].ssid);
+            M5.Display.setCursor(4, y);
+            M5.Display.print(line);
+            M5.Display.setTextColor(MB_WHITE, MB_BLACK);
+            y += 11;
+        }
+        if (gHasGPS && gCurrentFix.valid && y < MB_BTN_Y - 12) {
+            M5.Display.setTextColor(MB_GREEN, MB_BLACK);
+            snprintf(line, sizeof(line), "  GPS: %.6f %.6f", gCurrentFix.lat, gCurrentFix.lon);
+            M5.Display.setCursor(4, y);
+            M5.Display.print(line);
+            M5.Display.setTextColor(MB_WHITE, MB_BLACK);
+            y += 11;
+        }
+        if (gHasLoRa && y < MB_BTN_Y - 12) {
+            M5.Display.setTextColor(MB_YELLOW, MB_BLACK);
+            M5.Display.setCursor(4, y);
+            M5.Display.print("  LoRa: available");
+            M5.Display.setTextColor(MB_WHITE, MB_BLACK);
+            y += 11;
+        }
+        y += 2;
+    }
+    M5.Display.setCursor(8, MB_BTN_Y - 12);
+    M5.Display.setTextColor(MB_GREY, MB_BLACK);
+    M5.Display.print("Press C to return");
+}
+
+void setup() {
+
   Serial.begin(115200);
   delay(300);
 
@@ -2639,7 +2689,7 @@ void loop()
   // only task allowed to touch M5Unified (M5.update()/M5.BtnX) since that
   // object is shared with the display and is not thread-safe. loop() just
   // consumes whichever action (if any) the UI task recorded since the last
-  // check. Action codes: 1 = Btn A (save session), 3 = Btn C/B (force
+  // check. Action codes: 1 = Btn A (save), 2 = Btn B (waypoint), 3 = Btn C (det list)
   // channel hop). M5Basic's brightness cycle (Btn B) and Core2's vibration
   // tick are handled entirely inside the UI task and need no feedback here.
   {
