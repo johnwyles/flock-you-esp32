@@ -41,4 +41,23 @@ static bool detect_gps(TwoWire &bus = Wire, uint8_t sda = 21, uint8_t scl = 22) 
   return false;
 }
 
+// ── CC1101 detection (SPI chip-ID read) ───────────────────────────────────────
+// CC1101 PARTNUM=0x00, VERSION=0x14
+static bool detect_cc1101(SPIClass &spi = SPI, uint8_t cs = 4) {
+  pinMode(cs, OUTPUT);
+  digitalWrite(cs, HIGH);
+  spi.begin();
+  delay(10);
+  digitalWrite(cs, LOW);
+  spi.transfer(0x30 | 0x80); // read PARTNUM
+  uint8_t partnum = spi.transfer(0x00);
+  digitalWrite(cs, HIGH);
+  if (partnum != 0x00) return false;
+  digitalWrite(cs, LOW);
+  spi.transfer(0x31 | 0x80); // read VERSION
+  uint8_t version = spi.transfer(0x00);
+  digitalWrite(cs, HIGH);
+  return (version == 0x14);
+}
+
 #endif /* FY_HARDWARE_H */

@@ -68,6 +68,7 @@
 #include "storage_backend.h"
 #include "fy_sd_storage.h"
 #include "fy_gps.h"
+#include "fy_cc1101.h"
 #include "fy_hardware.h"
 
 // M5StickC Plus SE — ST7789v2 1.14" display (240×135 landscape)
@@ -873,6 +874,8 @@ static bool fySpiffsReady = false;
 static bool fyDirty = false;
 static bool gHasGPS = false;
 static bool gHasLoRa = false;
+static bool gHasCC1101 = false;
+SubGHzDetection gSubGHzDet;
 static bool gSdRawReady = false;
 static unsigned long fyLastSaveAt = 0;
 static int fyLastSaveCount = 0;
@@ -2441,6 +2444,15 @@ void setup() {
     gpsInit(Wire, 21, 22);
   }
   if (gHasLoRa) dualPrintln("[flockyou] LoRa module (SX127x) detected on SPI");
+  gHasCC1101 = detect_cc1101(SPI, 4);
+  if (gHasCC1101) {
+    dualPrintln("[flockyou] CC1101 sub-GHz detected (315/433/868/915 MHz)");
+    cc1101Init(SPI, 4);
+  }
+  if (gHasCC1101) {
+    cc1101Init(SPI, 5);
+    dualPrintln("[flockyou] CC1101 sub-GHz module detected");
+  }
 #endif
 
 #if defined(USE_M5BASIC)
@@ -2675,6 +2687,15 @@ void loop()
 
   // GPS read (non-blocking, ~10ms)
   if (gHasGPS) gpsRead();
+
+  // Sub-GHz scan (non-blocking, ~300ms full band scan)
+  if (gHasCC1101) {
+    static unsigned long lastScan = 0;
+    if (millis() - lastScan > 5000) { // scan every 5s
+      cc1101Scan();
+      lastScan = millis();
+    }
+  }
   ledTick();
 
 #if defined(ENABLE_BLE_SCAN) && ENABLE_BLE_SCAN
