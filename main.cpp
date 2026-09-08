@@ -865,6 +865,21 @@ typedef struct
   uint16_t count;
   char ssid[33];
   uint8_t maxConfidence; // highest confidence score seen for this MAC
+  // GPS fields (populated when gHasGPS && fix valid)
+  bool hasGps;
+  float gpsLat;
+  float gpsLon;
+  float gpsAlt;
+  float gpsSpeed;
+  uint8_t gpsSatellites;
+  float gpsHdop;
+  // CC1101 sub-GHz fields (populated when gHasCC1101)
+  bool hasSubGHz;
+  uint16_t subGHzFreqMhz;
+  int8_t subGHzRssi;
+  uint8_t subGHzBand;
+  char subGHzType[16];
+  uint8_t subGHzLen;
 } FYDetection;
 
 static FYDetection fyDet[MAX_DETECTIONS];
@@ -873,9 +888,9 @@ static uint8_t gFakeMacCounter = 0;
 static int fyDetCount = 0;
 static bool fySpiffsReady = false;
 static bool fyDirty = false;
-static bool gHasGPS = false;
-static bool gHasLoRa = false;
-static bool gHasCC1101 = false;
+bool gHasGPS = false;
+bool gHasLoRa = false;
+bool gHasCC1101 = false;
 SubGHzDetection gSubGHzDet;
 static bool gWebServerMode = false;
 static bool gSdRawReady = false;
@@ -1535,11 +1550,39 @@ static size_t fySerializeDet(const FYDetection &d, char *dst, size_t cap)
   int n = snprintf(dst, cap,
                    "{\"mac\":\"%s\",\"method\":\"%s\",\"rssi\":%d,\"channel\":%u,"
                    "\"first\":%lu,\"last\":%lu,\"count\":%u,\"ssid\":\"%s\","
-                   "\"confidence\":%u}",
+                   "\"confidence\":%u",
                    d.mac, d.method, d.rssi, (unsigned)d.channel,
                    (unsigned long)d.firstSeen, (unsigned long)d.lastSeen,
                    (unsigned)d.count, ssidEsc, (unsigned)d.maxConfidence);
-  return (n > 0 && (size_t)n < cap) ? (size_t)n : 0;
+  if (n == 0 || (size_t)n >= cap) return 0;
+  // Append GPS if available and fix valid
+  if (gHasGPS && d.hasGps) {
+    char gpsBuf[120];
+    int m = snprintf(gpsBuf, sizeof(gpsBuf),
+                     ",\"gps\":{\"lat\":%.6f,\"lon\":%.6f,\"alt\":%.1f,"
+                     "\"speed\":%.1f,\"satellites\":%u,\"hdop\":%.1f}",
+                     d.gpsLat, d.gpsLon, d.gpsAlt, d.gpsSpeed,
+                     (unsigned)d.gpsSatellites, d.gpsHdop);
+    if (m > 0 && (size_t)(n + m) < cap) {
+      memcpy(dst + n, gpsBuf, m);
+      n += m;
+    }
+  }
+  // Append LoRa flag if module detected
+  if (gHasLoRa) {
+    char loraBuf[40];
+    int m = snprintf(loraBuf, sizeof(loraBuf), ",\"lora\":{\"available\":true}");
+    if (m > 0 && (size_t)(n + m) < cap) {
+      memcpy(dst + n, loraBuf, m);
+      n += m;
+    }
+  }
+  // Close object
+  if ((size_t)(n + 1) < cap) {
+    dst[n++] = '}';
+    dst[n] = '\0';
+  }
+  return (n > 0) ? (size_t)n : 0;
 }
 
 static uint32_t fyComputePayloadCRC(size_t &outBytes)

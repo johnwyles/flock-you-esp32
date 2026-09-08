@@ -687,13 +687,13 @@ static void m5basicDetection(const char* method, const char* mac,
 // ── Button tick ───────────────────────────────────────────────────────────────
 // Call from loop() every iteration.
 // Returns: 0=none  1=A(save)  2=B(brightness)  3=C(hop/clear)
+bool waypointRecordManual(const char *label);
+
 static int m5basicButtonTick() {
     M5.update();
     if (M5.BtnA.wasPressed()) return 1;
     if (M5.BtnB.wasPressed()) {
-        mb_brightness = (mb_brightness < 80)  ? 160 :
-                        (mb_brightness < 200) ? 255 : 40;
-        M5.Display.setBrightness(mb_brightness);
+        waypointRecordManual("manual");
         return 2;
     }
     if (M5.BtnC.wasPressed()) {

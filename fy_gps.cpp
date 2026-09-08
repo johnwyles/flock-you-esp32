@@ -3,187 +3,115 @@
 
 #include "fy_gps.h"
 #include <Wire.h>
-
-static GpsFix gFix;
-static bool gpsEnabled = false;
-
-// NMEA sentence buffer
-static char nmeaBuf[256];
-static int nmeaLen = 0;
-
-// Parse GPGGA sentence for position data
-static bool parseGPGGA(const char *sentence) {
-  // $GPGGA,hhmmss.ss,ddmm.mmmm,N,dddmm.mmmm,E,fix,nsat,hdop,alt,M,...
-  const char *p = sentence;
-  // Skip "$GPGGA,"
-  if (strncmp(p, "$GPGGA,", 7) != 0) return false;
-  p += 7;
-
-  // Parse UTC time (skip)
-  while (*p && *p != ',') p++;
-  if (*p != ',') return false;
-  p++;
-
-  // Parse latitude
-  double lat = 0, lon = 0;
-  char latDir = 'N', lonDir = 'E';
-  int fixQuality = 0;
-  int satellites = 0;
-  float hdop = 99.9, alt = 0.0;
-
-  // Latitude: ddmm.mmmm
-  if (*p && *p != ',') {
-    lat = atof(p);
-    int deg = (int)(lat / 100);
-    double mins = lat - (deg * 100);
-    lat = deg + mins / 60.0;
-    while (*p && *p != ',') p++;
-    if (*p == ',') { p++; latDir = *p; p++; }
-    while (*p && *p != ',') p++;
-  }
-  if (*p == ',') p++;
-
-  // Longitude: dddmm.mmmm
-  if (*p && *p != ',') {
-    lon = atof(p);
-    int deg = (int)(lon / 100);
-    double mins = lon - (deg * 100);
-    lon = deg + mins / 60.0;
-    while (*p && *p != ',') p++;
-    if (*p == ',') { p++; lonDir = *p; p++; }
-    while (*p && *p != ',') p++;
-  }
-  if (*p == ',') p++;
-
-  // Fix quality
-  if (*p && *p != ',') {
-    fixQuality = *p - '0';
-    while (*p && *p != ',') p++;
-  }
-  if (*p == ',') p++;
-
-  // Satellites
-  if (*p && *p != ',') {
-    satellites = atoi(p);
-    while (*p && *p != ',') p++;
-  }
-  if (*p == ',') p++;
-
-  // HDOP
-  if (*p && *p != ',') {
-    hdop = atof(p);
-    while (*p && *p != ',') p++;
-  }
-  if (*p == ',') p++;
-
-  // Altitude
-  if (*p && *p != ',') {
-    alt = atof(p);
-    while (*p && *p != ',') p++;
-  }
-
-  if (fixQuality > 0 && satellites > 0) {
-    if (latDir == 'S') lat = -lat;
-    if (lonDir == 'W') lon = -lon;
-    gFix.lat = lat;
-    gFix.lon = lon;
-    gFix.alt = alt;
-    gFix.satellites = satellites;
-    gFix.hdop = hdop;
-    gFix.valid = true;
-    gFix.timestampMs = millis();
-    return true;
-  }
-  return false;
-}
-
-// Try to read NMEA bytes from I2C GPS module
-static bool i2cReadNMEA() {
-  // M5Stack GPS Unit v1.1 (AT6668): read NMEA from register 0x10
-  Wire.beginTransmission(0x10);
-  Wire.write(0x00);
-  if (Wire.endTransmission(false) != 0) return false;
-
-  // Read up to 64 bytes
-  int avail = Wire.requestFrom(0x10, 64);
-  if (avail < 10) return false;
-
-  int idx = 0;
-  while (Wire.available() && idx < 250) {
-    char c = Wire.read();
-    if (c == '\n') {
-      nmeaBuf[nmeaLen] = 0;
-      if (nmeaLen > 6 && strncmp(nmeaBuf, "$GPGGA", 6) == 0) {
-        return parseGPGGA(nmeaBuf);
-      }
-      nmeaLen = 0;
-    } else if (c >= 0x20 && c < 0x7F && nmeaLen < 255) {
-      nmeaBuf[nmeaLen++] = c;
-    }
-  }
-  return false;
-}
+#include <time.h>
 
 void gpsInit(TwoWire &bus, uint8_t sda, uint8_t scl) {
   bus.begin(sda, scl);
-  delay(50);
-  gpsEnabled = true;
-  gFix.valid = false;
-  nmeaLen = 0;
-}
-
-bool gpsRead() {
-  if (!gpsEnabled) return false;
-  return i2cReadNMEA();
+  gCurrentFix.valid = false;
+  Serial.printf("[gps] init on I2C SDA=%d SCL=%d\n", sda, scl);
 }
 
 bool waypointRecord(const char *label) {
-  if (!gFix.valid) {
-    Serial.println("[gps] no fix — waypoint not recorded");
-    return false;
-  }
+  return waypointRecordManual(label);
+}
 
-  // Load existing waypoints
-  File f = fyOpen(WAYPOINT_FILE, "r");
-  int count = 0;
-  if (f) {
-    // Count existing entries
-    while (f.available()) {
-      if (f.read() == '{') count++;
+// GPS I2C address
+static const uint8_t GPS_ADDR = 0x10;
+
+// Current fix state
+GpsFix gCurrentFix;
+
+// NMEA parser state
+static char nmeaBuf[128];
+static uint8_t nmeaIdx = 0;
+
+static bool gpsReadNMEA() {
+  if (!gHasGPS) return false;
+  Wire.beginTransmission(GPS_ADDR);
+  Wire.write(0x00);
+  if (Wire.endTransmission() != 0) return false;
+  int avail = Wire.requestFrom((int)GPS_ADDR, 64);
+  if (avail <= 0) return false;
+  while (avail-- > 0 && Wire.available()) {
+    char c = Wire.read();
+    if (c == '\n') {
+      nmeaBuf[nmeaIdx] = '\0';
+      nmeaIdx = 0;
+      if (strncmp(nmeaBuf, "$GPGGA", 6) == 0 || strncmp(nmeaBuf, "$GNGGA", 6) == 0) {
+        char *p = nmeaBuf;
+        char *tokens[16];
+        int ti = 0;
+        tokens[ti++] = strtok_r(p, ",", &p);
+        while (ti < 16 && tokens[ti-1]) tokens[ti++] = strtok_r(NULL, ",", &p);
+        if (ti > 9 && tokens[2][0] && tokens[4][0]) {
+          gCurrentFix.valid = true;
+          gCurrentFix.lat = atof(tokens[2]) / 100.0;
+          if (tokens[3][0] == 'S') gCurrentFix.lat = -gCurrentFix.lat;
+          gCurrentFix.lon = atof(tokens[4]) / 100.0;
+          if (tokens[6][0] == 'W') gCurrentFix.lon = -gCurrentFix.lon;
+          gCurrentFix.alt = tokens[9][0] ? atof(tokens[9]) : 0.0;
+          gCurrentFix.satellites = tokens[8][0] ? atoi(tokens[8]) : 0;
+          gCurrentFix.hdop = tokens[10][0] ? atof(tokens[10]) : 99.9;
+          return true;
+        }
+      }
+    } else if (c != '\r') {
+      if (nmeaIdx < sizeof(nmeaBuf) - 1) nmeaBuf[nmeaIdx++] = c;
     }
-    f.close();
   }
+  return false;
+}
 
-  if (count >= MAX_WAYPOINTS) {
-    Serial.println("[gps] waypoint limit reached");
-    return false;
-  }
-
-  // Append new waypoint
-  f = fyOpen(WAYPOINT_FILE, "a");
-  if (!f) {
-    Serial.println("[gps] waypoint save failed");
-    return false;
-  }
-
-  unsigned long ts = gFix.timestampMs;
-  f.printf("{\"label\":\"%s\",\"lat\":%.6f,\"lon\":%.6f,\"alt\":%.1f,"
-           "\"sat\":%d,\"hdop\":%.1f,\"ts\":%lu}\n",
-           label, gFix.lat, gFix.lon, gFix.alt,
-           gFix.satellites, gFix.hdop, ts);
-  f.close();
-  Serial.printf("[gps] waypoint saved: %s (%.6f, %.6f)\n", label, gFix.lat, gFix.lon);
-  return true;
+bool gpsRead() {
+  if (!gHasGPS) return false;
+  return gpsReadNMEA();
 }
 
 void waypointAppendToJSON(char *buf, size_t len) {
-  if (!gFix.valid) {
+  if (!gCurrentFix.valid) {
     snprintf(buf, len, ",\"gps\":null");
     return;
   }
   snprintf(buf, len, ",\"gps\":{\"lat\":%.6f,\"lon\":%.6f,\"alt\":%.1f,"
                      "\"sat\":%d,\"hdop\":%.1f}",
-           gFix.lat, gFix.lon, gFix.alt, gFix.satellites, gFix.hdop);
+           gCurrentFix.lat, gCurrentFix.lon, gCurrentFix.alt,
+           gCurrentFix.satellites, gCurrentFix.hdop);
 }
 
-GpsFix gCurrentFix;
+static bool waypointWriteFile(const char *path, const char *entry) {
+  File f = fyOpen(path, "a");
+  if (!f) return false;
+  f.print(entry);
+  f.close();
+  return true;
+}
+
+static void waypointRollDate(char *path, size_t len) {
+  time_t now = time(nullptr);
+  struct tm tm;
+  localtime_r(&now, &tm);
+  snprintf(path, len, "/waypoints-%04d-%02d-%02d.json",
+           tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
+}
+
+bool waypointRecordManual(const char *label) {
+  if (!gCurrentFix.valid) {
+    Serial.println("[gps] manual waypoint skipped: no fix");
+    return false;
+  }
+  char path[64];
+  waypointRollDate(path, sizeof(path));
+  char entry[160];
+  snprintf(entry, sizeof(entry),
+           "{\"ts\":%lu,\"label\":\"%s\",\"lat\":%.6f,\"lon\":%.6f,"
+           "\"alt\":%.1f,\"sat\":%d,\"hdop\":%.1f}\n",
+           (unsigned long)time(nullptr), label,
+           gCurrentFix.lat, gCurrentFix.lon, gCurrentFix.alt,
+           gCurrentFix.satellites, gCurrentFix.hdop);
+  if (waypointWriteFile(path, entry)) {
+    Serial.printf("[gps] waypoint saved: %s (%.6f, %.6f)\n", label, gCurrentFix.lat, gCurrentFix.lon);
+    return true;
+  }
+  Serial.println("[gps] waypoint save FAILED");
+  return false;
+}

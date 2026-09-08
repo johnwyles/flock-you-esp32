@@ -29,6 +29,11 @@ struct Waypoint {
 // GPS globals (updated from I2C read task)
 extern GpsFix gCurrentFix;
 
+// Module presence flags (defined in main.cpp)
+extern bool gHasGPS;
+extern bool gHasLoRa;
+extern bool gHasCC1101;
+
 // Initialize GPS on I2C bus (Wire = SDA=21/SCL=22 on M5Stack Basic)
 void gpsInit(TwoWire &bus = Wire, uint8_t sda = 21, uint8_t scl = 22);
 
@@ -40,5 +45,6 @@ bool waypointRecord(const char *label);
 
 // Append GPS fields to detection JSON (called from drainAlertQueue)
 void waypointAppendToJSON(char *buf, size_t len);
+bool waypointRecordManual(const char *label);
 
 #endif /* FY_GPS_H */
