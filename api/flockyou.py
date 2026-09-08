@@ -279,18 +279,33 @@ def flock_reader():
                                     dm = data.get('detection_method', '')
                                     if dm.startswith('wifi_'):
                                         data['detection_method'] = dm[5:]
-                                    # Map ESP32 GPS from phone to Flask GPS format
+                                    # Map ESP32 GPS from device to Flask GPS format
                                     esp_gps = data.get('gps')
                                     if esp_gps:
-                                        data['gps'] = {
-                                            'latitude': esp_gps.get('latitude'),
-                                            'longitude': esp_gps.get('longitude'),
-                                            'fix_quality': 1,
-                                            'match_quality': 'esp32_phone_gps',
-                                            'time_diff': 0,
-                                        }
-                                        if esp_gps.get('accuracy') is not None:
-                                            data['gps']['accuracy'] = esp_gps['accuracy']
+                                        # New ESP32 GPS format: lat/lon/alt/sat/hdop/ts
+                                        if 'lat' in esp_gps and 'lon' in esp_gps:
+                                            data['gps'] = {
+                                                'latitude': esp_gps.get('lat'),
+                                                'longitude': esp_gps.get('lon'),
+                                                'altitude': esp_gps.get('alt'),
+                                                'satellites': esp_gps.get('sat'),
+                                                'hdop': esp_gps.get('hdop'),
+                                                'timestamp': esp_gps.get('ts'),
+                                                'fix_quality': 1 if esp_gps.get('sat', 0) > 0 else 0,
+                                                'match_quality': 'esp32_gps',
+                                                'time_diff': 0,
+                                            }
+                                        # Legacy ESP32 phone GPS format: latitude/longitude/accuracy
+                                        elif 'latitude' in esp_gps:
+                                            data['gps'] = {
+                                                'latitude': esp_gps.get('latitude'),
+                                                'longitude': esp_gps.get('longitude'),
+                                                'fix_quality': 1,
+                                                'match_quality': 'esp32_phone_gps',
+                                                'time_diff': 0,
+                                            }
+                                            if esp_gps.get('accuracy') is not None:
+                                                data['gps']['accuracy'] = esp_gps['accuracy']
                                     add_detection_from_serial(data)
                                 else:
                                     print(f"JSON data without detection_method: {data}")
