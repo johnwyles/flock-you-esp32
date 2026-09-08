@@ -23,3 +23,7 @@ idf_component.yml.orig
 session.json
 session.tmp
 prev_session.json
+
+# Local WiFi credentials — do not commit
+.env
+.env.local
