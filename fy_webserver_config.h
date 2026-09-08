@@ -7,8 +7,17 @@
 #include <Arduino.h>
 
 // Default AP credentials (overridden by config.json if present)
+#ifdef FY_WS_SSID
+#define FY_WS_DEFAULT_SSID FY_WS_SSID
+#else
 #define FY_WS_DEFAULT_SSID "flock-you"
+#endif
+
+#ifdef FY_WS_PASS
+#define FY_WS_DEFAULT_PASS FY_WS_PASS
+#else
 #define FY_WS_DEFAULT_PASS "flockyou"
+#endif
 #define FY_WS_IP         IPAddress(192, 168, 4, 1)
 #define FY_WS_GATEWAY    IPAddress(192, 168, 4, 1)
 #define FY_WS_SUBNET     IPAddress(255, 255, 255, 0)
