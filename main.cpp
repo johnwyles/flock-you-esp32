@@ -66,6 +66,9 @@
 // Storage abstraction: unified SD/SPIFFS selection menu + file API
 #include "storage_select.h"
 #include "storage_backend.h"
+#include "fy_sd_storage.h"
+#include "fy_gps.h"
+#include "fy_hardware.h"
 
 // M5StickC Plus SE — ST7789v2 1.14" display (240×135 landscape)
 #if defined(USE_M5STICKC_PLUS_SE)
@@ -868,6 +871,9 @@ static uint8_t gFakeMacCounter = 0;
 static int fyDetCount = 0;
 static bool fySpiffsReady = false;
 static bool fyDirty = false;
+static bool gHasGPS = false;
+static bool gHasLoRa = false;
+static bool gSdRawReady = false;
 static unsigned long fyLastSaveAt = 0;
 static int fyLastSaveCount = 0;
 
@@ -1781,7 +1787,7 @@ static void fySaveSession()
 
 static void emitDetectionJSON(const char *mac, const char *method,
                               int8_t rssi, uint8_t ch, const char *ssid,
-                              uint8_t confidence)
+                              uint8_t confidence, bool hasGps)
 {
   char ssidEsc[sizeof(((FYDetection *)0)->ssid) * 6 + 1];
   jsonEscape(ssidEsc, sizeof(ssidEsc), ssid ? ssid : "");
@@ -1817,6 +1823,12 @@ static void emitDetectionJSON(const char *mac, const char *method,
       mac, isBle ? "n/a" : ouiStr, rssi,
       (unsigned)ch, (unsigned)channelFreqMhz(ch),
       ssidEsc, (unsigned)confidence);
+  if (hasGps) {
+    char gpsSuffix[80];
+    waypointAppendToJSON(gpsSuffix, sizeof(gpsSuffix));
+    Serial.print(gpsSuffix);
+  }
+  Serial.println();
 }
 
 // ============================================================
@@ -2132,7 +2144,7 @@ static void drainAlertQueue()
                       (e.type == ALERT_SSID || e.type == ALERT_LAA_SSID)
                           ? e.ssid
                           : "",
-                      e.confidence);
+                      e.confidence, gHasGPS);
 
     // PR#39: only chirp and LED flash for detections at or above CHIRP_MIN_CONFIDENCE.
     // Contract-mfr OUI alone (conf=20 < 30) logs silently — no audible/visual noise.
@@ -2370,6 +2382,15 @@ void setup()
 // M5Stack Basic/Core2: M5Unified fully inits inside m5basicInit().
 #if defined(USE_M5BASIC)
   m5basicInit();
+
+  // Hardware auto-detection for optional GPS + LoRa modules
+  gHasGPS = detect_gps(Wire, 21, 22);
+  gHasLoRa = detect_lora(5, 26, 2);
+  if (gHasGPS) {
+    dualPrintln("[flockyou] GPS module detected on I2C (0x10/0x42)");
+    gpsInit(Wire, 21, 22);
+  }
+  if (gHasLoRa) dualPrintln("[flockyou] LoRa module (SX127x) detected on SPI");
 #endif
 
 #if defined(USE_M5BASIC)
@@ -2418,6 +2439,18 @@ void setup()
   m5basicScanning(currentChannel, channelModeName(), 0,
                   millis(), false,
                   (int)FY_OUI_HIGH_COUNT, (int)FY_OUI_MFR_COUNT);
+#endif
+
+  // SD card raw file storage for M5Launcher data retrieval
+#if defined(USE_M5BASIC)
+  if (gStorageChoice == StorageChoice::Sd && gStorageReady) {
+    if (sdInit()) {
+      dualPrintln("[flockyou] SD raw file storage ready");
+      gSdRawReady = true;
+    } else {
+      dualPrintln("[flockyou] SD raw file storage init failed");
+    }
+  }
 #endif
 // M5StickC Plus SE: M5Unified inits in m5stickcInit() (display + AXP192, no I2S).
 #if defined(USE_M5STICKC_PLUS_SE)
@@ -2590,6 +2623,10 @@ void loop()
   printHeartbeat();
   screenTick();
 
+  // GPS read (non-blocking, ~10ms)
+  if (gHasGPS) gpsRead();
+  ledTick();
+
 #if defined(ENABLE_BLE_SCAN) && ENABLE_BLE_SCAN
   bleScanTick(fyPromiscPaused);
 #if defined(BLE_SELF_TEST) && BLE_SELF_TEST
@@ -2611,6 +2648,11 @@ void loop()
     {
       fySaveSession();
       Serial.println("[flockyou] Manual save (button)");
+    }
+    else if (btn == 2 && gHasGPS)
+    {
+      waypointRecord("manual");
+      Serial.println("[flockyou] Waypoint recorded (button)");
     }
     else if (btn == 3)
     {

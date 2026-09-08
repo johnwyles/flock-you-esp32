@@ -314,7 +314,7 @@ static void uiTaskFn(void* pv) {
                         scan.spiffsOk, (int)FY_OUI_HIGH_COUNT, (int)FY_OUI_MFR_COUNT);
         {
             int btn = m5basicButtonTick();
-            if (btn == 1 || btn == 3) uiSetButtonAction((uint8_t)btn);
+            if (btn == 1 || btn == 2 || btn == 3) uiSetButtonAction((uint8_t)btn);
         }
 #if defined(USE_M5CORE2_AWS)
         m5basicVibrationTick();
@@ -335,7 +335,7 @@ static void uiTaskFn(void* pv) {
                          scan.spiffsOk, (int)FY_OUI_HIGH_COUNT, (int)FY_OUI_MFR_COUNT);
         {
             int btn = m5stickcButtonTick();
-            if (btn == 1 || btn == 3) uiSetButtonAction((uint8_t)btn);
+            if (btn == 1 || btn == 2 || btn == 3) uiSetButtonAction((uint8_t)btn);
         }
 #endif
 
