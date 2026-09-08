@@ -539,14 +539,11 @@ This project is licensed **CC-BY-SA 4.0**:
 
 ### Upload custom credentials (optional)
 
-Upload a `config.json` file to the ESP32 filesystem via mpremote:
 
 ```bash
 echo '{"ssid":"my-ssid","password":"mypassword"}' | \
-  /tmp/mpvenv/bin/mpremote connect /dev/ttyACM0 fs cp :config.json
 ```
 
-The ESP32 webserver will read `/config.json` on startup if present.
 
 ### Host-side Flask backend
 
