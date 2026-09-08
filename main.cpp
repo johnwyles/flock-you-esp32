@@ -2275,6 +2275,26 @@ void m5basicDrawDetList() {
     M5.Display.print("Press C to return");
 }
 
+// Webserver activity log state
+static bool mb_showWebLog = false;
+static char mb_webLog[120] = {0};
+static unsigned long mb_webLogMs = 0;
+
+// Draw webserver activity log
+void m5basicDrawWebLog() {
+    M5.Display.fillRect(0, MB_HDR_H, MB_W, MB_BTN_Y - MB_HDR_H, MB_DARK_GRN);
+    M5.Display.setTextSize(2);
+    M5.Display.setTextColor(MB_WHITE, MB_DARK_GRN);
+    M5.Display.setCursor(10, MB_HDR_H + 8);
+    M5.Display.print("WEB SERVER");
+    M5.Display.setCursor(10, MB_HDR_H + 28);
+    M5.Display.setTextSize(1);
+    M5.Display.print("192.168.4.1");
+    M5.Display.setCursor(4, MB_HDR_H + 46);
+    M5.Display.setTextColor(MB_WHITE, MB_DARK_GRN);
+    M5.Display.printf("%s", mb_webLog);
+}
+
 void setup() {
 
   Serial.begin(115200);

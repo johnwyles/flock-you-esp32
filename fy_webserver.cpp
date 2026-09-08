@@ -2,6 +2,11 @@
 // Serves JSON detections + status when toggled from promiscuous mode
 
 #include "fy_webserver.h"
+#include "fy_webserver_config.h"
+
+extern bool mb_showWebLog;
+extern char mb_webLog[120];
+extern unsigned long mb_webLogMs;
 #include "storage_backend.h"
 
 static bool gWebServerActive = false;
@@ -13,9 +18,16 @@ WebServer gWebServer(80);
 
 void fyWebServerStart() {
   if (gWebServerActive) return;
+  char ssid[64] = {0};
+  char pass[64] = {0};
+  fyWsReadConfig(ssid, sizeof(ssid), pass, sizeof(pass));
   WiFi.mode(WIFI_AP);
-  WiFi.softAPConfig(gApIP, gApIP, IPAddress(255, 255, 255, 0));
-  bool ok = WiFi.softAP(gApSSID, gApPass, 6);
+  WiFi.softAPConfig(FY_WS_IP, FY_WS_IP, FY_WS_SUBNET);
+  bool ok = WiFi.softAP(ssid, pass, 6);
+  snprintf(mb_webLog, sizeof(mb_webLog), "AP: %s IP: %s", ssid, FY_WS_IP.toString().c_str());
+  mb_showWebLog = true;
+  mb_webLogMs = millis();
+  Serial.printf("[webserver] SSID=%s PASS=%s IP=%s\n", ssid, pass, FY_WS_IP.toString().c_str());
   if (!ok) {
     Serial.println("[webserver] AP start failed");
     return;
@@ -24,6 +36,8 @@ void fyWebServerStart() {
 
   // Serve detection data as JSON
   gWebServer.on("/detections", []() {
+    snprintf(mb_webLog, sizeof(mb_webLog), "GET /detections from %s", gWebServer.client().remoteIP().toString().c_str());
+    mb_webLogMs = millis();
     File f = fyOpen("/flock_you-session.json", "r");
     if (!f) {
       gWebServer.send(404, "application/json", "{\"error\":\"no data\"}");
