@@ -69,6 +69,7 @@
 #include "fy_sd_storage.h"
 #include "fy_gps.h"
 #include "fy_cc1101.h"
+#include "fy_webserver.h"
 #include "fy_hardware.h"
 
 // M5StickC Plus SE — ST7789v2 1.14" display (240×135 landscape)
@@ -876,6 +877,7 @@ static bool gHasGPS = false;
 static bool gHasLoRa = false;
 static bool gHasCC1101 = false;
 SubGHzDetection gSubGHzDet;
+static bool gWebServerMode = false;
 static bool gSdRawReady = false;
 static unsigned long fyLastSaveAt = 0;
 static int fyLastSaveCount = 0;
@@ -2449,6 +2451,7 @@ void setup() {
     dualPrintln("[flockyou] CC1101 sub-GHz detected (315/433/868/915 MHz)");
     cc1101Init(SPI, 4);
   }
+  dualPrintln("[flockyou] Btn C short=det list, long=web server toggle");
   if (gHasCC1101) {
     cc1101Init(SPI, 5);
     dualPrintln("[flockyou] CC1101 sub-GHz module detected");
@@ -2687,6 +2690,14 @@ void loop()
 
   // GPS read (non-blocking, ~10ms)
   if (gHasGPS) gpsRead();
+
+  // Web server mode
+  if (gWebServerMode) {
+    fyWebServerTick();
+    // Pause promiscuous and scanning while webserver is active
+    esp_wifi_set_promiscuous(false);
+    return;
+  }
 
   // Sub-GHz scan (non-blocking, ~300ms full band scan)
   if (gHasCC1101) {
