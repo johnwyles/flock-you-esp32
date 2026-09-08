@@ -2279,6 +2279,7 @@ void m5basicDrawDetList() {
 static bool mb_showWebLog = false;
 static char mb_webLog[120] = {0};
 static unsigned long mb_webLogMs = 0;
+static const char *mb_wifiStatus = "disconnected";
 
 // Draw webserver activity log
 void m5basicDrawWebLog() {
@@ -2289,7 +2290,7 @@ void m5basicDrawWebLog() {
     M5.Display.print("WEB SERVER");
     M5.Display.setCursor(10, MB_HDR_H + 28);
     M5.Display.setTextSize(1);
-    M5.Display.print("192.168.4.1");
+    M5.Display.printf("WiFi: %s", mb_wifiStatus);
     M5.Display.setCursor(4, MB_HDR_H + 46);
     M5.Display.setTextColor(MB_WHITE, MB_DARK_GRN);
     M5.Display.printf("%s", mb_webLog);

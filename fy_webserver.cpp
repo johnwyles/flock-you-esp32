@@ -7,6 +7,7 @@
 extern bool mb_showWebLog;
 extern char mb_webLog[120];
 extern unsigned long mb_webLogMs;
+extern const char *mb_wifiStatus;
 #include "storage_backend.h"
 
 static bool gWebServerActive = false;
@@ -24,10 +25,12 @@ void fyWebServerStart() {
   WiFi.mode(WIFI_AP);
   WiFi.softAPConfig(FY_WS_IP, FY_WS_IP, FY_WS_SUBNET);
   bool ok = WiFi.softAP(ssid, pass, 6);
-  snprintf(mb_webLog, sizeof(mb_webLog), "AP: %s IP: %s", ssid, FY_WS_IP.toString().c_str());
+  mb_wifiStatus = "connecting...";
+  snprintf(mb_webLog, sizeof(mb_webLog), "AP: %s", ssid);
   mb_showWebLog = true;
   mb_webLogMs = millis();
   Serial.printf("[webserver] SSID=%s PASS=%s IP=%s\n", ssid, pass, FY_WS_IP.toString().c_str());
+  mb_wifiStatus = "connected";
   if (!ok) {
     Serial.println("[webserver] AP start failed");
     return;
@@ -38,6 +41,7 @@ void fyWebServerStart() {
   gWebServer.on("/detections", []() {
     snprintf(mb_webLog, sizeof(mb_webLog), "GET /detections from %s", gWebServer.client().remoteIP().toString().c_str());
     mb_webLogMs = millis();
+    Serial.printf("[webserver] %s\n", mb_webLog);
     File f = fyOpen("/flock_you-session.json", "r");
     if (!f) {
       gWebServer.send(404, "application/json", "{\"error\":\"no data\"}");
@@ -69,6 +73,7 @@ void fyWebServerStop() {
   WiFi.mode(WIFI_OFF);
   delay(100);
   gWebServerActive = false;
+  mb_wifiStatus = "disconnected";
   Serial.println("[webserver] stopped, resuming scanning");
 }
 

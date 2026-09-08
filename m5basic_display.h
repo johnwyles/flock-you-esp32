@@ -542,7 +542,7 @@ static void m5basicScanning(uint8_t ch, const char* modeName, int detCount,
     M5.Display.printf("Runtime: %-10s  SPIFFS: %s", el, spiffsOk ? "OK" : "ERR");
 
     mb_drawLogStrip(true);   // force: this whole region was just fillRect(BLACK)'d above
-    mb_btnBar("SAVE", "WAYPOINT", "HOP CH");
+    mb_btnBar("SAVE", "WAYPOINT", "WEB");
 }
 
 
@@ -668,7 +668,7 @@ static void m5basicDetection(const char* method, const char* mac,
         M5.Display.print("LOW — possible false positive");
 
     mb_drawLogStrip(true);   // force: the whole content area was just fillRect(BLACK)'d for this alert screen
-    mb_btnBar("SAVE", "WAYPOINT", "CLEAR");
+    mb_btnBar("SAVE", "WAYPOINT", "WEB");
 
 
     // Core2 For AWS: vibration alert — non-blocking. Triggers the pattern;
