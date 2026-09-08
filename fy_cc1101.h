@@ -7,13 +7,13 @@
 #include <Arduino.h>
 #include <SPI.h>
 
-// CC1101 SPI pins (M5Stack CC1101 Module default: Port B/GROVE)
-// Uses separate SPI bus from LoRa to avoid conflicts.
-// M5Stack CC1101 Module: SCK=13, MISO=15, MOSI=2, CS=4, GDO0=0
+// CC1101 SPI pins (shared SPI bus with LoRa on Port B)
+// LoRa: SCK=18, MISO=19, MOSI=23, CS=5
+// CC1101: SCK=18, MISO=19, MOSI=23, CS=4 (different CS avoids conflict)
 #define CC1101_CS   4
-#define CC1101_MOSI 2
-#define CC1101_MISO 15
-#define CC1101_SCK  13
+#define CC1101_MOSI 23
+#define CC1101_MISO 19
+#define CC1101_SCK  18
 #define CC1101_GDO0 0
 
 // CC1101 register addresses
