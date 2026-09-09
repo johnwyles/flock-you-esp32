@@ -195,3 +195,15 @@ void cc1101AppendToJSON(char *buf, size_t len) {
 
 
 
+
+bool cc1101AddDetectionFake(uint8_t sigType, uint32_t freqHz, int8_t rssi) {
+  SubGHzDetection det;
+  memset(&det, 0, sizeof(det));
+  det.frequency = freqHz;
+  det.rssi = rssi;
+  det.band = (freqHz >= 868000000) ? CC1101_BAND_868 : (freqHz >= 433000000) ? CC1101_BAND_433 : (freqHz >= 315000000) ? CC1101_BAND_315 : CC1101_BAND_915;
+  det.length = 8;
+  det.sigType = sigType;
+  det.timestampMs = millis();
+  return cc1101AddDetection(det);
+}

@@ -852,6 +852,14 @@ static void bleScanTick(bool &promiscPaused)
 
 #endif // ENABLE_BLE_SCAN
 
+static void bleInjectFake() {
+#if defined(ENABLE_BLE_SCAN) && ENABLE_BLE_SCAN
+  static uint8_t fakeMac[6] = {0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6};
+  fakeMac[5]++;
+  enqueueAlert(ALERT_BLE_NAME, fakeMac, -50, 1, nullptr, "Flock Camera net.", 60);
+#endif
+}
+
 // ============================================================
 // DETECTION TABLE  (on-device storage, persisted to SPIFFS)
 // ============================================================
@@ -2776,6 +2784,28 @@ void setup() {
   startUiTask();
 }
 
+// Fake detection helpers (implemented later in this file)
+bool loraAddDetectionFake(uint32_t freqHz, int8_t rssi);
+bool cc1101AddDetectionFake(uint8_t sigType, uint32_t freqHz, int8_t rssi);
+
+// LoRa fake detection helper
+bool loraAddDetectionFake(uint32_t freqHz, int8_t rssi) {
+  if (fyDetCount >= MAX_DETECTIONS) return false;
+  FYDetection *d = &fyDet[fyDetCount++];
+  memset(d, 0, sizeof(*d));
+  snprintf(d->mac, sizeof(d->mac), "lora-%06x", (unsigned)(freqHz / 1000));
+  snprintf(d->method, sizeof(d->method), "lora");
+  d->rssi = rssi;
+  d->channel = 0;
+  d->firstSeen = millis() / 1000;
+  d->lastSeen = d->firstSeen;
+  d->count = 1;
+  d->maxConfidence = 30;
+  snprintf(d->ssid, sizeof(d->ssid), "LoRa %u MHz", (unsigned)(freqHz / 1000000));
+  fyDirty = true;
+  return true;
+}
+
 void loop()
 {
   updateChannelMode();
@@ -2868,17 +2898,101 @@ void loop()
   }
 #endif
 
-  // Serial command: inject fake detection for save testing
+  // Serial command parser
   if (Serial.available()) {
     String cmd = Serial.readStringUntil('\n');
     cmd.trim();
-    if (cmd.equalsIgnoreCase("CMD:FAKE")) {
+    if (cmd.equalsIgnoreCase("CMD:HELP")) {
+      Serial.println("[flockyou] Commands: FAKE, FAKE_WIFI, FAKE_BLE, FAKE_TPMS, FAKE_REMOTE, FAKE_WEATHER, FAKE_GPS, FAKE_LORA, CLEAR, STATUS, HELP");
+    } else if (cmd.equalsIgnoreCase("CMD:FAKE")) {
+      // Inject one of each active module type
       static uint8_t fakeMac[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
-      // Rotate last byte so each fake is a new unique MAC
       fakeMac[5]++;
       channelLockActive = false;
       enqueueAlert(ALERT_OUI_ADDR2, fakeMac, -45, 1, nullptr, "test", 75);
-      Serial.println("[flockyou] Fake detection injected");
+      Serial.println("[flockyou] Fake WiFi detection injected");
+      if (gHasGPS) {
+        waypointRecord("fake_gps");
+        Serial.println("[flockyou] Fake GPS waypoint injected");
+      }
+      if (gHasCC1101) {
+        cc1101AddDetectionFake(CC1101_SIG_TPMS, 433920, -50);
+        cc1101AddDetectionFake(CC1101_SIG_REMOTE, 315000, -60);
+        cc1101AddDetectionFake(CC1101_SIG_WEATHER, 433500, -55);
+        Serial.println("[flockyou] Fake CC1101 detections injected");
+      }
+      if (gHasLoRa) {
+        loraAddDetectionFake(915000, -65);
+        Serial.println("[flockyou] Fake LoRa detection injected");
+      }
+#if defined(ENABLE_BLE_SCAN) && ENABLE_BLE_SCAN
+      bleInjectFake();
+      Serial.println("[flockyou] Fake BLE detection injected");
+#endif
+    } else if (cmd.equalsIgnoreCase("CMD:FAKE_WIFI")) {
+      static uint8_t fakeMac[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
+      fakeMac[5]++;
+      channelLockActive = false;
+      enqueueAlert(ALERT_OUI_ADDR2, fakeMac, -45, 1, nullptr, "test", 75);
+      Serial.println("[flockyou] Fake WiFi detection injected");
+    } else if (cmd.equalsIgnoreCase("CMD:FAKE_BLE")) {
+#if defined(ENABLE_BLE_SCAN) && ENABLE_BLE_SCAN
+      bleInjectFake();
+      Serial.println("[flockyou] Fake BLE detection injected");
+#else
+      Serial.println("[flockyou] BLE not enabled");
+#endif
+    } else if (cmd.equalsIgnoreCase("CMD:FAKE_TPMS")) {
+      if (gHasCC1101) {
+        cc1101AddDetectionFake(CC1101_SIG_TPMS, 433920, -50);
+        Serial.println("[flockyou] Fake TPMS detection injected");
+      } else {
+        Serial.println("[flockyou] CC1101 not present");
+      }
+    } else if (cmd.equalsIgnoreCase("CMD:FAKE_REMOTE")) {
+      if (gHasCC1101) {
+        cc1101AddDetectionFake(CC1101_SIG_REMOTE, 315000, -60);
+        Serial.println("[flockyou] Fake remote detection injected");
+      } else {
+        Serial.println("[flockyou] CC1101 not present");
+      }
+    } else if (cmd.equalsIgnoreCase("CMD:FAKE_WEATHER")) {
+      if (gHasCC1101) {
+        cc1101AddDetectionFake(CC1101_SIG_WEATHER, 433500, -55);
+        Serial.println("[flockyou] Fake weather detection injected");
+      } else {
+        Serial.println("[flockyou] CC1101 not present");
+      }
+    } else if (cmd.equalsIgnoreCase("CMD:FAKE_GPS")) {
+      if (gHasGPS) {
+        waypointRecord("fake_gps");
+        Serial.println("[flockyou] Fake GPS waypoint injected");
+      } else {
+        Serial.println("[flockyou] GPS not present");
+      }
+    } else if (cmd.equalsIgnoreCase("CMD:FAKE_LORA")) {
+      if (gHasLoRa) {
+        loraAddDetectionFake(915000, -65);
+        Serial.println("[flockyou] Fake LoRa detection injected");
+      } else {
+        Serial.println("[flockyou] LoRa not present");
+      }
+    } else if (cmd.equalsIgnoreCase("CMD:CLEAR")) {
+      fyDetCount = 0;
+      fyDirty = false;
+      Serial.println("[flockyou] All detections cleared");
+    } else if (cmd.equalsIgnoreCase("CMD:STATUS")) {
+      Serial.printf("[flockyou] Detections: %d/%d\n", fyDetCount, MAX_DETECTIONS);
+      Serial.printf("[flockyou] GPS: %s, LoRa: %s, CC1101: %s\n",
+                    gHasGPS ? "yes" : "no",
+                    gHasLoRa ? "yes" : "no",
+                    gHasCC1101 ? "yes" : "no");
+#if defined(ENABLE_BLE_SCAN) && ENABLE_BLE_SCAN
+      Serial.printf("[flockyou] BLE: enabled\n");
+#else
+      Serial.printf("[flockyou] BLE: disabled\n");
+#endif
+      Serial.printf("[flockyou] Free heap: %d bytes\n", ESP.getFreeHeap());
     }
   }
 

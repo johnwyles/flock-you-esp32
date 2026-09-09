@@ -1,5 +1,5 @@
-// flock-you-esp32 — Hardware auto-detection + feature degradation
-// Detects optional GPS and LoRa modules and disables features when absent.
+// flock-you-esp32 — Hardware detection for GPS, LoRa, CC1101
+// Disables features automatically when modules are absent.
 
 #ifndef FY_HARDWARE_H
 #define FY_HARDWARE_H
@@ -7,57 +7,50 @@
 #include <Arduino.h>
 #include <SPI.h>
 
-// ── LoRa detection (SPI + SX127x chip-ID read) ──────────────────────────────
+// ── LoRa detection (SPI + SX127x chip-ID read) ───────────────────────────────
 // SX1276/SX1278/RA-02 register 0x42 (version) reads back 0x12 on real hardware.
-// Returns true when chip-ID matches and DIO0 is wired (basic connectivity check).
 static bool detect_lora(uint8_t cs_pin = 5, uint8_t rst_pin = 26, uint8_t dio0_pin = 2) {
-  SPI.begin();                    // M5Stack Basic: VSPI (SCK=18, MISO=19, MOSI=23)
+  SPI.begin();
   pinMode(cs_pin, OUTPUT);
   digitalWrite(cs_pin, HIGH);
-  if (rst_pin < 255) {
+  if (rst_pin != 0xFF) {
     pinMode(rst_pin, OUTPUT);
-    digitalWrite(rst_pin, LOW);  delayMicroseconds(100);
-    digitalWrite(rst_pin, HIGH); delay(10);
+    digitalWrite(rst_pin, LOW);
+    delay(10);
+    digitalWrite(rst_pin, HIGH);
+    delay(10);
   }
   digitalWrite(cs_pin, LOW);
-  SPI.transfer(0x42);            // read REG_VERSION
+  SPI.transfer(0x42);
   uint8_t ver = SPI.transfer(0x00);
   digitalWrite(cs_pin, HIGH);
-  if (ver != 0x12) return false; // SX127x version register
-  pinMode(dio0_pin, INPUT);
-  return true;                   // chip present, DIO0 readable
+  return (ver == 0x12);
 }
 
-// ── GPS detection (I2C scan for common GPS module addresses) ─────────────────
-// L76GNSS = 0x10,  AT6668 = 0x10, NEO-6M = 0x42, MAX-7 = 0x10
+// ── CC1101 detection (SPI + PARTNUM read) ────────────────────────────────────
+// CC1101 PARTNUM register (0x30) reads back 0x00 on real hardware.
+static bool detect_cc1101(SPIClass &spi = SPI, uint8_t cs = 4) {
+  spi.begin();
+  pinMode(cs, OUTPUT);
+  digitalWrite(cs, HIGH);
+  delay(1);
+  digitalWrite(cs, LOW);
+  spi.transfer(0x30 | 0x80);
+  uint8_t part = spi.transfer(0x00);
+  digitalWrite(cs, HIGH);
+  return (part == 0x00);
+}
+
+// ── GPS detection (I2C scan) ─────────────────────────────────────────────────
 static bool detect_gps(TwoWire &bus = Wire, uint8_t sda = 21, uint8_t scl = 22) {
   bus.begin(sda, scl);
-  delay(50);
+  delay(10);
   const uint8_t addrs[] = {0x10, 0x42, 0x66, 0x08};
-  for (uint8_t a : addrs) {
-    bus.beginTransmission(a);
+  for (uint8_t i = 0; i < sizeof(addrs); i++) {
+    bus.beginTransmission(addrs[i]);
     if (bus.endTransmission() == 0) return true;
   }
   return false;
-}
-
-// ── CC1101 detection (SPI chip-ID read) ───────────────────────────────────────
-// CC1101 PARTNUM=0x00, VERSION=0x14
-static bool detect_cc1101(SPIClass &spi = SPI, uint8_t cs = 4) {
-  pinMode(cs, OUTPUT);
-  digitalWrite(cs, HIGH);
-  spi.begin();
-  delay(10);
-  digitalWrite(cs, LOW);
-  spi.transfer(0x30 | 0x80); // read PARTNUM
-  uint8_t partnum = spi.transfer(0x00);
-  digitalWrite(cs, HIGH);
-  if (partnum != 0x00) return false;
-  digitalWrite(cs, LOW);
-  spi.transfer(0x31 | 0x80); // read VERSION
-  uint8_t version = spi.transfer(0x00);
-  digitalWrite(cs, HIGH);
-  return (version == 0x14);
 }
 
 #endif /* FY_HARDWARE_H */

@@ -148,6 +148,7 @@ void cc1101AppendToJSON(char *buf, size_t len);
 
 // Add a sub-GHz detection entry (implemented in main.cpp)
 bool cc1101AddDetection(const SubGHzDetection &det);
+bool cc1101AddDetectionFake(uint8_t sigType, uint32_t freqHz, int8_t rssi);
 
 // Global state (defined in main.cpp)
 extern SubGHzDetection gSubGHzDet;
