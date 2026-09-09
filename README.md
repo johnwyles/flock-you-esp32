@@ -18,39 +18,161 @@ ESP32 firmware for M5Stack Basic Development Kit with hardware detection for GPS
 ## Features
 
 ### WiFi 2.4 GHz Promiscuous Scanning
-- Channels 1-13 (2412-2484 MHz)
-- Probe requests, beacons, deauth frames
-- Flock camera SSID matching (`Flock Camera net.`, `Flock-XXXXXX`)
-- MAC OUI tracking for manufacturer identification
-- Confidence scoring system
+**What it looks for:**
+- All 802.11 frames in monitor mode: **probe requests**, **beacon frames**, **deauth frames**
+- Specifically hunting for **Flock Safety camera** signatures:
+  - SSIDs starting with `Flock Camera net.`
+  - SSIDs matching `Flock-XXXXXX`
+  - MAC OUI prefixes known to belong to Flock hardware
+- Any device sending probe requests for known Flock SSIDs
+- Channel range: 1-13 (2412-2484 MHz)
 
-### BLE Scanning (enabled by default)
-- 2400-2483.5 MHz
-- Flock BLE manufacturer ID detection
-- Raven service UUID detection
-- Device name matching
+**What gets recorded:**
+- Source MAC address
+- Signal strength (RSSI)
+- Channel number
+- SSID (from beacons/probe requests)
+- Encryption type (open/WEP/WPA/WPA2/WPA3)
+- Confidence score based on SSID match, OUI match, and sequential MAC patterns
+- Timestamps: first seen, last seen, hit count
 
-### GPS Waypoints
-- Records lat/lon/alt/satellites/HDOP
-- Manual waypoint: **Btn B** press
-- Auto-saved every 60s when fix valid
-- Date-rolling file: `waypoints-YYYY-MM-DD.json` (e.g., `waypoints-2026-05-01.json`)
+### BLE Scanning
+**What it looks for:**
+- BLE advertisement packets (non-connectable undirected advertisements)
+- Specifically hunting for **Flock Safety BLE signatures**:
+  - Manufacturer ID `0x0499` (Flock Safety / Will Greenberg)
+  - Raven / Flock service UUID patterns (128-bit UUIDs)
+  - Device names containing `Flock`, `Camera`, or `Raven`
+- Uses NimBLE-Arduino scanner with time-multiplexing around WiFi promiscuous mode
+- Frequency: 2400-2483.5 MHz
+
+**What gets recorded:**
+- BLE MAC address
+- Signal strength (RSSI)
+- Match type: manufacturer ID, service UUID, or device name
+- Confidence score
+- GPS coordinates if fix available at time of detection
 
 ### CC1101 Sub-GHz Detection
-Scans all 4 bands every 5 seconds:
-| Band | Frequency | Signals detected |
-|------|-----------|------------------|
-| 315 MHz | Car key fobs, garage doors | OOK/ASK modulation |
-| 433 MHz | TPMS (tire pressure), weather stations, car remotes | FSK/OOK |
-| 868 MHz | European ISM sensors | FSK/OOK |
-| 915 MHz | US ISM sensors | FSK/OOK |
+Scans all 4 bands every 5 seconds.
 
-Each detection logged with: MAC (`cc1101-XXXX`), freq MHz, RSSI dBm, band, type (TPMS/remote/weather/garage/LoRa), packet length
+#### TPMS Detection (433 MHz)
+**What it looks for:**
+- **Tire Pressure Monitoring System** signals at 433.92 MHz
+- Protocols: Schrader eXpanders, Continental TPMS, Huf TPMS
+- Signal characteristics:
+  - FSK or OOK modulation
+  - Rolling code with ~30-60 second transmission intervals
+  - Packet length: typically 8-16 bytes
+  - Payload includes: sensor ID, pressure, temperature, battery status, rolling code counter
+- While driving: stationary or slow-moving vehicles with TPMS sensors
+
+**What gets recorded:**
+- Frequency: 433.92 MHz
+- RSSI
+- Band: `433 MHz`
+- Type: `tpms`
+- Packet length
+- MAC: `cc1101-01d0` (derived from frequency)
+
+#### Car Remote / Key Fob Detection (315 MHz / 433 MHz)
+**What it looks for:**
+- **Car key fob** signals at 315 MHz (North America) or 433 MHz (Europe/Asia)
+- Protocols: KeeLoq (HCS301), HCS200, AVR410
+- Signal characteristics:
+  - OOK/ASK modulation
+  - Rolling code with sync counter
+  - Button press events: lock, unlock, trunk release, panic
+  - Packet length: typically 10-12 bytes afterManchester decoding
+  - Transmission duration: ~30-100ms per button press
+- While driving: other vehicles locking/unlocking, nearby parking lots
+
+**What gets recorded:**
+- Frequency: 315000 or 433920 Hz
+- RSSI
+- Band: `315 MHz` or `433 MHz`
+- Type: `remote`
+- Packet length
+- MAC: `cc1101-004b` or `cc1101-01d0`
+
+#### Weather Station Detection (433 MHz)
+**What it looks for:**
+- **Personal weather station** signals at 433 MHz
+- Protocols: Acurite 00592TX, Oregon Scientific V1/V2/V3, Ambient Weather, Fine Offset
+- Signal characteristics:
+  - OOK or FSK modulation
+  - Periodic transmission: every 20-40 seconds
+  - Packet length: typically 6-12 bytes afterManchester decoding
+  - Payload includes: temperature, humidity, wind speed/direction, rainfall, barometric pressure
+  - Sensor ID for multi-sensor stations
+- While driving: residential areas with mounted weather stations
+
+**What gets recorded:**
+- Frequency: 433.92 MHz
+- RSSI
+- Band: `433 MHz`
+- Type: `weather`
+- Packet length
+- MAC: `cc1101-01d0`
+
+#### Garage Door / Gate Opener Detection (315 MHz / 433 MHz)
+**What it looks for:**
+- **Garage door** and **gate opener** signals
+- Protocols: KeeLoq, Linear DTMF, MultiCode
+- Signal characteristics:
+  - OOK/ASK modulation
+  - Rolling or fixed code
+  - Button press events
+  - Short transmission: ~30-100ms
+- While driving: residential garages, commercial gates
+
+**What gets recorded:**
+- Frequency: 315000 or 433920 Hz
+- RSSI
+- Band: `315 MHz` or `433 MHz`
+- Type: `garage`
+- Packet length
+- MAC: `cc1101-004b` or `cc1101-01d0`
 
 ### LoRa Presence Detection
-- Detects LoRa-modulated signals at 433/868/915 MHz
-- Logs frequency, RSSI, packet length
-- Without Meshtastic parameters: signal presence only
+**What it looks for:**
+- **LoRa-modulated signals** at 433, 868, or 915 MHz
+- Current implementation: **signal presence only**
+  - Frequency detected
+  - Signal strength (RSSI)
+  - Packet length
+- **Why not decoded payloads?**
+  - Requires exact radio parameters: spreading factor (SF7-SF12), bandwidth (125/250/500 kHz), coding rate (4/5-4/8), preamble length
+  - Many proprietary LoRa devices use custom parameters
+  - Without exact params: can detect chirps exist but cannot decode bits
+- **Worth noting while driving:**
+  - **Meshtastic nodes** if on your channel/frequency (open protocol, can decode if configured)
+  - **LoRaWAN gateways** always present in cities
+  - **Unknown sensors**: agriculture, metering, asset trackers
+
+**What gets recorded:**
+- Frequency: 433000, 868000, or 915000 Hz
+- RSSI
+- Method: `lora`
+- SSID: `LoRa 433 MHz`, `LoRa 868 MHz`, or `LoRa 915 MHz`
+- Packet length if available
+
+### GPS Waypoints
+**What it does:**
+- Reads NMEA sentences from GPS Unit v1.1 (AT6668) over I2C
+- Extracts: latitude, longitude, altitude, speed, satellite count, HDOP, timestamp
+- **Btn B**: manual waypoint marker with label `"manual"`
+- Auto-save: appends to `waypoints-YYYY-MM-DD.json` every 60 seconds when GPS fix valid
+- File rolls over when date changes
+
+**What gets recorded:**
+- Unix timestamp
+- Label (`manual` or `auto`)
+- Latitude, longitude, altitude (meters)
+- Speed (km/h)
+- Satellite count
+- HDOP (horizontal dilution of precision)
+- GPS coordinates are also appended to **every WiFi/BLE/CC1101/LoRa detection** when fix is valid
 
 ### Webserver Mode
 - **Btn C long press (800ms)** toggles AP mode
