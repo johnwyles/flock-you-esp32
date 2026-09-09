@@ -37,27 +37,101 @@ void fyWebServerStart() {
   }
   Serial.printf("[webserver] AP started: %s / %s @ %s\n", gApSSID, gApPass, gApIP.toString().c_str());
 
-  // Serve detection data as JSON
-  gWebServer.on("/detections", []() {
-    snprintf(mb_webLog, sizeof(mb_webLog), "GET /detections from %s", gWebServer.client().remoteIP().toString().c_str());
+  // List all available files ordered by date
+  gWebServer.on("/files", []() {
+    snprintf(mb_webLog, sizeof(mb_webLog), "GET /files from %s", gWebServer.client().remoteIP().toString().c_str());
     mb_webLogMs = millis();
-    Serial.printf("[webserver] %s\n", mb_webLog);
-    File f = fyOpen("/flock_you-session.json", "r");
+    String html = "<html><body><h1>flock-you files</h1><ul>";
+    bool found = false;
+#if defined(USE_M5BASIC) && defined(USE_SDCARD)
+    if (gStorageReady) {
+      File root = SD.open("/");
+      if (root) {
+        String names[32];
+        int count = 0;
+        File f = root.openNextFile();
+        while (f && count < 32) {
+          if (!f.isDirectory()) {
+            String name = f.name();
+            if (name.startsWith("flock_you-") || name.startsWith("waypoints-")) {
+              names[count++] = name;
+            }
+          }
+          f = root.openNextFile();
+        }
+        root.close();
+        for (int i = 0; i < count; i++) {
+          for (int j = i + 1; j < count; j++) {
+            if (names[j] < names[i]) {
+              String tmp = names[i];
+              names[i] = names[j];
+              names[j] = tmp;
+            }
+          }
+        }
+        for (int i = 0; i < count; i++) {
+          html += "<li><a href='/file?name=" + names[i] + "'>" + names[i] + "</a></li>";
+          found = true;
+        }
+      }
+    }
+#endif
+    if (fySpiffsReady) {
+      fs::File root = SPIFFS.open("/");
+      if (root) {
+        String names[32];
+        int count = 0;
+        fs::File f = root.openNextFile();
+        while (f && count < 32) {
+          String name = f.name();
+          if (name.startsWith("flock_you-") || name.startsWith("waypoints-")) {
+            names[count++] = name;
+          }
+          f = root.openNextFile();
+        }
+        root.close();
+        for (int i = 0; i < count; i++) {
+          for (int j = i + 1; j < count; j++) {
+            if (names[j] < names[i]) {
+              String tmp = names[i];
+              names[i] = names[j];
+              names[j] = tmp;
+            }
+          }
+        }
+        for (int i = 0; i < count; i++) {
+          html += "<li><a href='/file?name=" + names[i] + "'>" + names[i] + "</a></li>";
+          found = true;
+        }
+      }
+    }
+    if (!found) html += "<li>(none yet)</li>";
+    html += "</ul></body></html>";
+    gWebServer.send(200, "text/html", html);
+  });
+
+  // Serve specific file by name
+  gWebServer.on("/file", []() {
+    String name = gWebServer.arg("name");
+    snprintf(mb_webLog, sizeof(mb_webLog), "GET /file?name=%s from %s", name.c_str(), gWebServer.client().remoteIP().toString().c_str());
+    mb_webLogMs = millis();
+    File f = fyOpen(name.c_str(), "r");
     if (!f) {
-      gWebServer.send(404, "application/json", "{\"error\":\"no data\"}");
+      gWebServer.send(404, "application/json", "{\"error\":\"not found\"}");
       return;
     }
     String body = f.readString();
     f.close();
-    gWebServer.send(200, "application/json", body);
+    String ct = (name.startsWith("waypoints-")) ? "application/json" : "application/json";
+    gWebServer.send(200, ct, body);
   });
 
-  // Status endpoint
+  // Root status endpoint
   gWebServer.on("/", []() {
     int detCount = fyDetCount;
     String html = "<html><body><h1>flock-you</h1>";
     html += "<p>Detections: " + String(detCount) + "</p>";
-    html += "<p><a href='/detections'>/detections</a></p>";
+    html += "<p><a href='/files'>Browse files</a></p>";
     html += "</body></html>";
     gWebServer.send(200, "text/html", html);
   });

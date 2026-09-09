@@ -363,11 +363,13 @@ static const char *ssid_exact_flock_cam_net = "Flock Camera net.";
 #define AUTOSAVE_INTERVAL_MS 60000
 
 // Generate daily filename: /flock_you-YYYY-MM-DD.json
-// Uses millis-based date so it works without NTC/RTC.
-static uint16_t gBootCounter = 0;
 static void fyDailySessionPath(char *out, size_t len)
 {
-  snprintf(out, len, "flock_you-%04u.json", gBootCounter);
+  time_t now = time(nullptr);
+  struct tm tm;
+  localtime_r(&now, &tm);
+  snprintf(out, len, "flock_you-%04d-%02d-%02d.json",
+           tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
 }
 // Confidence weights, OUI byte tables, and sequential-MAC tracking moved to
 // fy_confidence.h (included further below, after AlertType/isFcnSsid are
@@ -892,6 +894,38 @@ bool gHasGPS = false;
 bool gHasLoRa = false;
 bool gHasCC1101 = false;
 SubGHzDetection gSubGHzDet;
+
+// CC1101 sub-GHz detection entry creation
+bool cc1101AddDetection(const SubGHzDetection &det) {
+  if (fyDetCount >= MAX_DETECTIONS) return false;
+  FYDetection *d = &fyDet[fyDetCount++];
+  memset(d, 0, sizeof(*d));
+  snprintf(d->mac, sizeof(d->mac), "cc1101-%04x", (unsigned)(det.frequency / 1000));
+  snprintf(d->method, sizeof(d->method), "subghz");
+  d->rssi = det.rssi;
+  d->channel = 0;
+  d->firstSeen = millis() / 1000;
+  d->lastSeen = d->firstSeen;
+  d->count = 1;
+  d->maxConfidence = 40;
+  d->hasSubGHz = true;
+  d->subGHzFreqMhz = det.frequency / 1000000;
+  d->subGHzRssi = det.rssi;
+  d->subGHzBand = det.band;
+  const char *typeStr = "unknown";
+  switch (det.sigType) {
+    case 1: typeStr = "TPMS"; break;
+    case 2: typeStr = "remote"; break;
+    case 3: typeStr = "weather"; break;
+    case 4: typeStr = "garage"; break;
+    case 5: typeStr = "LoRa"; break;
+  }
+  snprintf(d->subGHzType, sizeof(d->subGHzType), "%s", typeStr);
+  d->subGHzLen = det.length;
+  fyDirty = true;
+  return true;
+}
+
 static bool gWebServerMode = false;
 static bool gSdRawReady = false;
 static unsigned long fyLastSaveAt = 0;
@@ -1732,7 +1766,7 @@ static uint16_t fyFindNextBootCounter()
           if (name.startsWith("flock_you-") && name.endsWith(".json"))
           {
             uint32_t seq = 0;
-            sscanf(name.c_str(), "flock_you-%u.json", &seq);
+            int year=0,month=0,day=0; sscanf(name.c_str(), "flock_you-%4u-%2u-%2u.json", &year,&month,&day); if (year>0 && month>0 && day>0) { seq = year*10000UL + month*100UL + day; }
             if (seq > maxSeq) maxSeq = seq;
           }
         }
@@ -1753,7 +1787,7 @@ static uint16_t fyFindNextBootCounter()
         if (name.startsWith("flock_you-") && name.endsWith(".json"))
         {
           uint32_t seq = 0;
-          sscanf(name.c_str(), "flock_you-%u.json", &seq);
+          int year2=0,month2=0,day2=0; sscanf(name.c_str(), "flock_you-%4u-%2u-%2u.json", &year2,&month2,&day2); if (year2>0 && month2>0 && day2>0) { seq = year2*10000UL + month2*100UL + day2; }
           if (seq > maxSeq) maxSeq = seq;
         }
         entry = f.openNextFile();
@@ -2531,7 +2565,6 @@ void setup() {
     dualPrintln("[flockyou] storage init FAILED — running without persistence");
   }
   fyLoadDailySession();
-  gBootCounter = fyFindNextBootCounter();
 
   if (st.choice == StorageChoice::Sd && gStorageReady)
   {

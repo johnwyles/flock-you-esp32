@@ -146,6 +146,9 @@ uint8_t cc1101Classify(const uint8_t *data, uint8_t len, uint8_t band);
 // Append sub-GHz fields to detection JSON
 void cc1101AppendToJSON(char *buf, size_t len);
 
+// Add a sub-GHz detection entry (implemented in main.cpp)
+bool cc1101AddDetection(const SubGHzDetection &det);
+
 // Global state (defined in main.cpp)
 extern SubGHzDetection gSubGHzDet;
 

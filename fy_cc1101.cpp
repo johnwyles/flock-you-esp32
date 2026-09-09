@@ -167,6 +167,7 @@ void cc1101Scan() {
         case CC1101_SIG_GARAGE: typeStr = "garage"; break;
         default: break;
       }
+      cc1101AddDetection(det);
       Serial.printf("[cc1101] %s on %u MHz, RSSI=%d dBm, len=%d\n",
                      typeStr, (unsigned)(det.frequency / 1000000), det.rssi, det.length);
     }
@@ -191,5 +192,6 @@ void cc1101AppendToJSON(char *buf, size_t len) {
            (unsigned)(gSubGHzDet.frequency / 1000000), gSubGHzDet.rssi,
            gSubGHzDet.band, typeStr, gSubGHzDet.length);
 }
+
 
 
