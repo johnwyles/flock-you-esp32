@@ -1,557 +1,201 @@
-# Flock-You ESP32 - Complete Build Package
-
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Author](https://img.shields.io/badge/Author-SimeonOnSecurity-green.svg)](https://github.com/simeononsecurity)
-
-**WiFi promiscuous-mode detector for Flock Safety surveillance cameras**
-
-Ported to standard ESP32 hardware for maximum accessibility and cost savings.
-
----
-
-## 🚀 Quick Links
-
-- **[Setup Instructions](SETUP_INSTRUCTIONS.md)** - Get started in 3 steps
-- **[Solderless Build Guide](SOLDERLESS_BUILD_GUIDE.md)** - No soldering required! ($9-11 total)
-- **[3D Printable Case](CASE_DESIGN.md)** - Professional enclosure design
-- **[Business Analysis](../BUSINESS_ANALYSIS.md)** - Market opportunity & financials
-- **[Porting Guide](../ESP32_PORTING_GUIDE.md)** - Technical documentation
-
----
-
-## ✨ What's Included
-
-This package contains everything you need to build and deploy your own Flock-You detector:
-
-### 📁 Firmware (`/firmware`)
-- **main.cpp** - Modified for ESP32 (GPIO 25, 2, 17)
-- **platformio.ini** - ESP32 DevKit configuration
-- **partitions_4mb.csv** - Optimized for 4MB flash
-- **api/** - Flask dashboard for GPS wardriving
-- **datasets/** - OUI lists & research data
-
-### 🔧 Hardware (`/hardware`)
-- **openscad/** - Parametric case source files
-- **stl/** - Ready-to-print STL files (coming soon)
-- **assembly_photos/** - Step-by-step build photos (coming soon)
-
-### 📚 Documentation
-- Complete user manuals
-- Troubleshooting guides
-- Business planning resources
-- Technical specifications
-
----
-
-## 💰 Cost Breakdown
-
-| Build Type | Components | Total Cost | Detection Accuracy |
-|------------|------------|------------|-------------------|
-| **Minimal** | ESP32 + USB cable | **$5** | ✅ 100% |
-| **Breadboard** | + Buzzer + breadboard | **$9-11** | ✅ 100% |
-| **With Case** | + 3D printed enclosure | **$10-12** | ✅ 100% |
-| **OUI-SPY** | Pre-built board | **$85** | ✅ 100% |
-
-**Same detection performance, 85% cost savings!**
-
----
-
-## 🎯 Three Ways to Build
-
-### Option 1: LED-Only (Cheapest)
-**Cost:** $5 | **Time:** 5 minutes | **Difficulty:** ⭐☆☆☆☆
-
-- ESP32 DevKit + USB cable
-- Onboard LED provides visual feedback
-- Perfect for testing or silent operation
-- [Instructions](SETUP_INSTRUCTIONS.md#minimal-led-only---5)
-
-### Option 2: Breadboard Build (Recommended)
-**Cost:** $9-11 | **Time:** 10 minutes | **Difficulty:** ⭐⭐☆☆☆
-
-- Add passive buzzer module + breadboard
-- Audio chirps on detection
-- No soldering required
-- [Full Guide](SOLDERLESS_BUILD_GUIDE.md)
-
-### Option 3: Enclosed Build (Professional)
-**Cost:** $10-12 | **Time:** 15 minutes + 3hr print | **Difficulty:** ⭐⭐⭐☆☆
-
-- 3D printed case with snap-fit lid
-- LED light pipe
-- USB strain relief
-**[Case Design](CASE_DESIGN.md)**
-
----
-
-## 🛠️ Quick Start
-
-### 1. Get Hardware
-**Minimum:**
-- [ESP32 DevKit](https://amazon.com/s?k=ESP32+DevKit) ($5-6)
-- USB Micro cable ($1)
-
-**Recommended:**
-- [ESP32 Breadboard Kit](https://amazon.com/s?k=ESP32+breadboard+kit) ($15-20)
-- Includes everything: ESP32 + breadboard + jumpers + buzzer
-
-### 2. Flash Firmware
-```bash
-# Install PlatformIO
-pip install platformio
-
-# Clone / enter the repo
-cd flock-you-esp32
-
-# WiFi-only (recommended first flash — works on any ESP32 DevKit)
-pio run -e esp32dev -t upload && pio device monitor
-
-# WiFi + BLE coexistence (continuous BLE scan + WiFi simultaneously)
-pio run -e esp32dev-ble -t upload && pio device monitor
-
-# M5Atom variants — use the unified flasher script
-./flash.sh          # interactively identifies your device
-./flash.sh --once   # flash one device and exit
-```
-
-**All supported environments:**
-
-| Environment | Board | BLE |
-|-------------|-------|-----|
-| `esp32dev` | ESP32 DevKit | — |
-| `esp32dev-ble` | ESP32 DevKit | ✅ COEX |
-| `m5atom-lite` | M5Atom Lite | — |
-| `m5atom-lite-ble` | M5Atom Lite | ✅ COEX |
-| `m5atom-echo` | M5Atom Echo | — |
-| `m5atom-echo-ble` | M5Atom Echo | ✅ COEX |
-| `m5atom-voice` | M5Atom Voice | — |
-| `m5atom-voice-ble` | M5Atom Voice | ✅ COEX |
-| `m5atom-voices3r` | Atom VoiceS3R (S3) | — |
-| `m5atom-voices3r-ble` | Atom VoiceS3R (S3) | ✅ COEX |
-| `lilygo-t-dongle-c5` | LILYGO T-Dongle C5 | — |
-| `lilygo-t-dongle-c5-ble` | LILYGO T-Dongle C5 | ✅ NimBLE 2.x |
-
-### 3. Test Detection
-- Device boots with Super Mario 1-2 startup tune
-- LED flashes on WiFi traffic
-- Buzzer chirps on Flock camera detection
-- Drive near known camera locations to verify
-
-**That's it!** You're detecting.
-
----
-
-## 📊 Detection Methodology
-
-This firmware uses **five research-proven techniques** with a confidence score (0–100):
-
-### 1. WiFi Promiscuous Sniffing (@NitekryDPaul)
-- Monitors 2.4 GHz management & data frames
-- **Three OUI confidence tiers** (PR#39):
-  - **HIGH** (32 OUIs) — exclusively Flock Safety registered → score 40, always alerts
-  - **MFR** (6 OUIs) — Liteon/USI contract manufacturer → score 20, silent log only
-  - **SoundThinking** (1 OUI) — acoustic sensor co-deployed with Flock → score 35, alerts
-- **addr1 receiver-side detection** (catches sleeping cameras)
-- **addr3 BSSID fallback** for randomized addr2 frames (now ON by default)
-
-### 2. Wildcard Probe Signature (DeFlockJoplin)
-- Flock cameras send **probe requests with empty SSID**
-- Combined score OUI+probe = 62 → HIGH CONFIDENCE on first match
-- Field-tested: 11/12 cameras detected, only 2 false positives
-
-### 3. SSID Pattern Matching — including LAA-MAC cameras (issue #43)
-- Patterns: `"Flock Camera net."`, `"Flock-XXXXXX"`, `"FLOCK-XXXXXX"`, `"penguin"`, `"pigvision"`
-- `"Flock Camera net."` cameras use **locally-administered MACs** (OUI matching won't work)
-- `ALERT_LAA_SSID` type detects these — SSID is the sole WiFi handle
-- Sequential-MAC heuristic: `:DE`/`:DF` last-byte pair on adjacent channels → +10 pts
-
-### 4. BLE Cross-Correlation (`ENABLE_BLE_SCAN=1`)
-- Passive NimBLE scan for Flock BLE advertisements
-- Checks: mfr-ID `0x09C8` (XUNTONG/Flock), Raven 128-bit service UUIDs (GainSec), device names
-- **BLE_COEX_MODE=1** (default for all `-ble` environments): ESP-IDF SW coexistence scheduler
-  runs WiFi promiscuous + BLE simultaneously — no promiscuous pause needed
-- BLE hit within 60 s of WiFi hit → +20 confidence bonus
-
-### 5. Multi-Address Matching
-- **addr2** (transmitter) — standard detection
-- **addr1** (receiver) — catches cameras receiving probe responses
-- **addr3** (BSSID) — fallback for randomized MACs
-
-**Confidence tiers:** < 30 = LOW (log only) · 30–59 = PROBABLE · ≥ 60 = HIGH (alert)
-
-See [DETECTION_IMPROVEMENTS.md](DETECTION_IMPROVEMENTS.md) for full scoring tables and examples.
-
----
-
-## 🧪 Native Unit Tests
-
-The detection pattern library (`fy_detect.h`) is fully tested via a host-side
-Unity test suite — no ESP32 hardware needed:
-
-```bash
-cd flock-you-esp32
-pio test -e native                         # run all 38 tests
-pio test -e native -f test_ble_matching    # MAC / BLE name / mfr-ID tests (22)
-pio test -e native -f test_uuid_matching   # Raven UUID / firmware version (16)
-```
-
-All **38 tests pass** against the current `fy_detect.h`.  The test suite covers:
-- All 32 high-confidence Flock OUI prefixes (case-insensitive)
-- All 6 contract-manufacturer OUIs (Liteon/USI)
-- SoundThinking OUI isolation (not in high or mfr lists)
-- BLE device name substring matching (case-insensitive)
-- BLE mfr-ID `0x09C8` match + rejection of the old incorrect `0x05A7`
-- All 8 Raven 128-bit GATT service UUIDs (case-insensitive)
-- Raven firmware version estimation from UUID categories
-
----
-
-## 🎵 Audio Feedback
-
-### Startup Sound
-**Super Mario Bros. World 1-2** (underground theme)
-- 6 notes: C5 → C4 → A4 → A3 → G#4 → G#3
-- Confirms buzzer is working
-
-### New Detection
-**Two fast ascending beeps** (2000 Hz → 2800 Hz)
-- First time seeing a camera MAC
-- Or camera reappears after 30+ seconds
-- This is the **only** runtime audio alert — the firmware does not emit
-  any periodic/idle "still tracking" beep. Audio fires exclusively on a
-  genuine new-detection event (`confidence >= CHIRP_MIN_CONFIDENCE`).
-
-### Visual
-**Onboard LED flashes** on every detection
-- Works even without buzzer
-- Visible through case light pipe
-
----
-
-## 📱 Flask Dashboard (GPS Wardriving)
-
-### Features
-- Real-time detection visualization
-- GPS coordinate tagging (USB puck or browser)
-- Export formats: JSON, CSV, KML (Google Earth)
-- Multi-device support
-- Historical tracking
-
-### Quick Setup
-```bash
-cd firmware/api
-pip install -r requirements.txt
-python flockyou.py
-```
-
-Open `http://localhost:5000` and select your serial port.
-
----
-
-## 📺 LILYGO T-Dongle C5 — Display & RGB LED
-
-The `lilygo-t-dongle-c5` and `lilygo-t-dongle-c5-ble` environments target the
-**LILYGO T-Dongle C5** — a USB-C dongle packing an ESP32-C5 (dual-band WiFi 6 + BT 5),
-an ST7735S **80×160 colour TFT**, and a **WS2812B RGB LED**.
-
-### What shows on the TFT
-
-| State | Display | RGB LED |
-|---|---|---|
-| Startup | Splash screen "T-Dongle C5 ready" → "Scanning…" | Blue blink × 3, then green |
-| Idle scanning | `Scanning…` · Channel & detection count | Dim green |
-| Detection (conf < 30) | Detection type (large) · MAC tail · RSSI · Channel · Confidence% | Dim green |
-| Detection (conf 30–59) | Same, dark-orange background | Amber |
-| Detection (conf ≥ 60) | Same, dark-red background | Red |
-
-### Pin reference
-
-| Signal | GPIO |
-|---|---|
-| TFT SCLK | 5 |
-| TFT MOSI | 6 |
-| TFT CS | 4 |
-| TFT DC | 2 |
-| TFT RST | 3 |
-| TFT Backlight | 1 |
-| RGB LED (WS2812B) | 11 |
-| BOOT button | 9 |
-
-### Flash commands
-
-```bash
-# WiFi-only (no BLE)
-pio run -e lilygo-t-dongle-c5 -t upload
-
-# WiFi + BLE (NimBLE 2.x required for ESP32-C5 BLE support)
-pio run -e lilygo-t-dongle-c5-ble -t upload
-```
-
-> **Note:** The T-Dongle C5 environments are marked experimental (`continue-on-error` in CI)
-> because ESP32-C5 toolchain support is still maturing in espressif32@6.7.0.
-
----
-
-## 🔬 Technical Specs
-
-### Detection
-- **Channels:** 1, 6, 11 (customizable)
-- **Dwell time:** 350ms per channel
-- **RSSI threshold:** -95 dBm (configurable)
-- **Range:** 50-100m typical, 300m with external antenna
-- **Latency:** <10ms from RF frame to alert
-
-### Hardware
-- **MCU:** ESP32-WROOM-32 (dual-core 240 MHz)
-- **RAM:** 520KB (uses ~85KB)
-- **Flash:** 4MB (uses ~1.2MB)
-- **Power:** ~180mA @ 3.3V (WiFi active)
-- **Battery:** 6-8 hours on 3,000mAh 18650
-
-### Storage
-- **SPIFFS:** 1MB partition
-- **Capacity:** 200 unique detections with full metadata
-- **Persistence:** CRC32-validated, atomic writes
-- **Recovery:** Survives power loss mid-save
-
----
-
-## 📦 What Makes This Special?
-
-### vs. Original Flock-You (XIAO ESP32-S3)
-✅ **85% cheaper** ($6 vs $85 for OUI-SPY)  
-✅ **Same detection** (identical WiFi chipset)  
-✅ **More available** (ESP32 everywhere, XIAO only Seeed)  
-✅ **Easier to prototype** (breadboard-friendly)  
-✅ **Larger community** (ESP32 has huge support)  
-
-### vs. Other Solutions
-✅ **Passive detection** (no transmission, legal)  
-✅ **Proven accuracy** (field-tested research)  
-✅ **Open source** (modify freely)  
-✅ **Portable** (pocket-sized with case)  
-✅ **Expandable** (add GPS, batteries, external antenna)  
-
----
-
-## 🚗 Use Cases
-
-### Privacy Awareness
-- Know when you're being surveilled
-- Document camera locations
-- Share data with DeFlock community
-- Raise awareness in your area
-
-### Security Research
-- Test detection algorithms
-- Map surveillance infrastructure
-- Contribute to open research
-- Develop counter-measures
-
-### Wardriving
-- GPS-tagged detection mapping
-- Export to Google Earth (KML)
-- Build community databases
-- Identify high-surveillance zones
-
-### Vehicle Integration
-- Dashboard mount (case design included)
-- USB power from car
-- Audio alerts while driving
-- Optional battery for portability
-
----
-
-## 📋 Complete BOM
-
-### Electronics
-| Part | Qty | Unit Price | Total |
-|------|-----|------------|-------|
-| ESP32 DevKit | 1 | $5-6 | $5-6 |
-| KY-006 Passive Buzzer | 1 | $1-2 | $1-2 |
-| 400-pt Breadboard | 1 | $2 | $2 |
-| Male-Male Jumpers (3) | 1 | <$1 | <$1 |
-| USB Micro Cable | 1 | $1 | $1 |
-| **Subtotal** | | | **$9-11** |
-
-### 3D Printed Case (Optional)
-| Part | Material | Cost |
-|------|----------|------|
-| Case Base | 15g PLA | $0.30-0.50 |
-| Case Lid | 8g PLA | $0.15-0.25 |
-| LED Light Pipe | 2g Clear | $0.05 |
-| Mounting Bracket | 12g PLA | $0.25 |
-| **Subtotal** | | **$0.75-1.00** |
-
-**Grand Total:** $10-12
-
----
-
-## 🐛 Troubleshooting
-
-### No startup sound?
-- Check passive (not active) buzzer
-- Verify GPIO 25 connection
-- Try swapping buzzer polarity
-- Disable in code: `#define USE_BUZZER 0`
-
-### No detections?
-- No cameras nearby (drive to known locations)
-- Check serial output (should show channel hopping)
-- Lower RSSI threshold: `#define RSSI_MIN -100`
-- Verify WiFi promiscuous mode enabled
-
-### Compilation errors?
-- Update PlatformIO: `pio upgrade`
-- Check board definition: `esp32dev`
-- Verify partition file exists
-- Clean build: `pio run -t clean`
-
-### Case doesn't fit?
-- Scale STL by 101% for looser fit
-- Sand snap-fit tabs if too tight
-- Check component dimensions against specs
-- Use OpenSCAD to customize
-
-**[Full Troubleshooting Guide](SOLDERLESS_BUILD_GUIDE.md#troubleshooting)**
-
----
-
-## 🤝 Contributing
-
-### Ways to Contribute
-- 📸 Share your build photos
-- 🐛 Report bugs & issues
-- 💡 Suggest features
-- 📝 Improve documentation
-- 🎨 Design case variants
-- 🧪 Field-test and report accuracy
-- 🗺️ Submit camera locations to DeFlock
-
-### Remix Culture
-This project is licensed **CC-BY-SA 4.0**:
-- ✅ Use commercially
-- ✅ Modify and remix
-- ✅ Share freely
-- 📝 Credit original authors
-- 🔄 Share-alike license
-
----
-
-## 🏆 Credits
-
-### Original Firmware
-- **colonelpanichacks** - Original Flock-You creator
-- **ØяĐöØцяöЪöяцฐ (@NitekryDPaul)** - WiFi research, 30 OUIs, addr1 technique
-- **Michael / DeFlockJoplin** - Wildcard-probe signature, 31st OUI
-- **Will Greenberg** - BLE manufacturer ID detection
-- **DeFlock / FoggedLens** - Crowdsourced ALPR data
-- **GainSec** - Raven BLE service UUIDs
-
-### This ESP32 Port
-- Modified for standard ESP32 (4MB flash, UART)
-- Solderless assembly guide
-- 3D printable case design
-- Business analysis & documentation
-- Community testing & feedback
-
----
-
-## ⚖️ Legal & Disclaimer
-
-### What This Device Does
-- **Passively receives** publicly-broadcast WiFi frames
-- **Does not transmit** any signals
-- **Does not authenticate** to networks
-- **Does not decrypt** any data
-- **Educational/research** purposes
-
-### Legality
-- Passive WiFi reception is **legal in most jurisdictions**
-- Equivalent to listening to public radio broadcasts
-- No different from WiFi analyzers or network sniffers
-- **Always comply with local laws**
-
-### Use Responsibly
-- Respect privacy and property rights
-- Use for legitimate security research
-- Contribute findings to public good (DeFlock)
-- Don't use to enable illegal activity
-
-**The authors assume no liability for misuse.**
-
----
-
-## 🔗 Resources
-
-### Community
-- **Original Repo:** [colonelpanichacks/flock-you](https://github.com/colonelpanichacks/flock-you)
-- **De-Flock:** [deflock.me](https://deflock.me) - Crowdsourced camera maps
-- **Research:** `firmware/datasets/` - Full methodology
-
-### Hardware
-- **ESP32:** [espressif.com](https://www.espressif.com/en/products/socs/esp32)
-- **PlatformIO:** [platformio.org](https://platformio.org/)
-- **OpenSCAD:** [openscad.org](https://openscad.org/)
-
-### Learn More
-- **WiFi Sniffing:** [ESP32 Promiscuous Mode](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/network/esp_wifi.html)
-- **3D Printing:** [All3DP Guides](https://all3dp.com/tag/3d-printing-guides/)
-- **Privacy Tech:** [EFF Surveillance Self-Defense](https://ssd.eff.org/)
-
----
-
-## 📈 Project Stats
-
-- **Hardware Cost:** $5-12 (vs $85 OUI-SPY)
-- **Build Time:** 5-15 minutes
-- **Detection Accuracy:** Same as premium hardware
-- **Supported Boards:** Any ESP32 with 4MB+ flash
-- **Community:** Growing!
-
----
-
-## 🎉 Get Started!
-
-**You're 3 steps away from detecting surveillance:**
-
-1. **[Buy hardware](https://amazon.com/s?k=ESP32+DevKit)** → $5-11
-2. **[Flash firmware](SETUP_INSTRUCTIONS.md)** → 10 minutes
-3. **[Build case](CASE_DESIGN.md)** → Optional
-
-**Questions?** Check the docs or open an issue!
-
-**Ready?** [Start Building →](SETUP_INSTRUCTIONS.md)
-
----
-
-*Built with love for privacy, security, and open knowledge.*  
-*Detect. Document. DeFlock.*
-
-## WiFi Credentials
-
-**Never check WiFi passwords into git.** The ESP32 firmware uses compiled-in defaults. Custom credentials are uploaded at runtime.
-
-### Default AP
-- SSID: `flock-you`
-- Password: `flockyou`
+# flock-you-esp32
+
+ESP32 firmware for M5Stack Basic Development Kit with hardware detection for GPS, LoRa, CC1101 sub-GHz, BLE, and WiFi promiscuous scanning. Built for detecting Flock Safety cameras and other wireless signals.
+
+## Hardware
+
+**Target:** M5Stack Basic (ESP32-PICO-D4)
+
+**Optional modules (auto-detected at boot):**
+| Module | Interface | Port | Pins |
+|--------|-----------|------|------|
+| GPS Unit v1.1 (AT6668) | I2C | Port A | SDA=21, SCL=22, addr 0x10 |
+| LoRa Module 433MHz (SX1278/RA-02) | SPI | Port B | CS=5, RST=26, DIO0=2, SCK=18, MISO=19, MOSI=23 |
+| CC1101 Module (315/433/868/915 MHz) | SPI | Port B | CS=4, GDO0=0, SCK=18, MISO=19, MOSI=23 |
+
+**Module conflict:** LoRa and CC1101 share SPI bus (SCK/MISO/MOSI) with different CS pins (5 vs 4). Both can be present simultaneously.
+
+## Features
+
+### WiFi 2.4 GHz Promiscuous Scanning
+- Channels 1-13 (2412-2484 MHz)
+- Probe requests, beacons, deauth frames
+- Flock camera SSID matching (`Flock Camera net.`, `Flock-XXXXXX`)
+- MAC OUI tracking for manufacturer identification
+- Confidence scoring system
+
+### BLE Scanning (enabled by default)
+- 2400-2483.5 MHz
+- Flock BLE manufacturer ID detection
+- Raven service UUID detection
+- Device name matching
+
+### GPS Waypoints
+- Records lat/lon/alt/satellites/HDOP
+- Manual waypoint: **Btn B** press
+- Auto-saved every 60s when fix valid
+- Date-rolling file: `waypoints-YYYY-MM-DD.json` (e.g., `waypoints-2026-05-01.json`)
+
+### CC1101 Sub-GHz Detection
+Scans all 4 bands every 5 seconds:
+| Band | Frequency | Signals detected |
+|------|-----------|------------------|
+| 315 MHz | Car key fobs, garage doors | OOK/ASK modulation |
+| 433 MHz | TPMS (tire pressure), weather stations, car remotes | FSK/OOK |
+| 868 MHz | European ISM sensors | FSK/OOK |
+| 915 MHz | US ISM sensors | FSK/OOK |
+
+Each detection logged with: MAC (`cc1101-XXXX`), freq MHz, RSSI dBm, band, type (TPMS/remote/weather/garage/LoRa), packet length
+
+### LoRa Presence Detection
+- Detects LoRa-modulated signals at 433/868/915 MHz
+- Logs frequency, RSSI, packet length
+- Without Meshtastic parameters: signal presence only
+
+### Webserver Mode
+- **Btn C long press (800ms)** toggles AP mode
+- SSID: `flock-you` / Password: `flockyou` (from `.env` at compile time)
 - IP: `192.168.4.1`
+- Display shows: WiFi status (connecting/connected/disconnected) + activity log
+- Endpoints:
+  - `GET /` - status page
+  - `GET /files` - lists all detection/waypoint files sorted by date
+  - `GET /file?name=flock_you-2026-05-01.json` - serves specific file
 
-### Upload custom credentials (optional)
+### Data Persistence
+- **SPIFFS** (internal flash) or **SD card** (if M5Launcher)
+- Detections: `flock_you-YYYY-MM-DD.json` (e.g., `flock_you-2026-05-01.json`)
+- Waypoints: `waypoints-YYYY-MM-DD.json`
+- Auto-save every 60s when new detections
+- Manual save: **Btn A**
 
+## Button Mapping
 
+| Button | Action |
+|--------|--------|
+| **A** | Save session (all detections to JSON) |
+| **B** | Record GPS waypoint (manual) |
+| **C** (short) | Show recent detections list (8s auto-hide) |
+| **C** (long, 800ms) | Toggle webserver on/off |
+
+## Serial Debug Commands
+
+All commands case-insensitive, end with newline:
+
+| Command | Description |
+|---------|-------------|
+| `CMD:HELP` | List all commands |
+| `CMD:FAKE` | Inject one fake detection per active module |
+| `CMD:FAKE_WIFI` | Inject fake WiFi detection |
+| `CMD:FAKE_BLE` | Inject fake BLE detection |
+| `CMD:FAKE_TPMS` | Inject fake TPMS (CC1101) |
+| `CMD:FAKE_REMOTE` | Inject fake car remote (CC1101) |
+| `CMD:FAKE_WEATHER` | Inject fake weather station (CC1101) |
+| `CMD:FAKE_GPS` | Inject fake GPS waypoint |
+| `CMD:FAKE_LORA` | Inject fake LoRa detection |
+| `CMD:CLEAR` | Clear all detections buffer |
+| `CMD:STATUS` | Print module status, detection count, free heap |
+
+**CMD:FAKE behavior:**
+- 1 WiFi detection
+- 1 BLE detection (if enabled)
+- 3 CC1101 detections (TPMS + remote + weather)
+- 1 LoRa detection (if present)
+- 1 GPS waypoint (if present)
+
+## Build & Upload
+
+### Prerequisites
+- PlatformIO
+- `.env` file with WiFi credentials (never committed):
 ```bash
-echo '{"ssid":"my-ssid","password":"mypassword"}' | \
+FLOCKYOU_WIFI_SSID=your_ssid
+FLOCKYOU_WIFI_PASS=your_password
 ```
 
+### Compile-time credential injection
+`generate_build_flags.py` reads `.env` and injects `FY_WS_SSID`/`FY_WS_PASS` into firmware binary. No secrets in source or runtime config.
 
-### Host-side Flask backend
-
-The Flask backend reads `.env` for its own network configuration:
-
+### Build environments
 ```bash
-cp .env.example .env
-# Edit .env with your real WiFi credentials
+pio run -e m5stack-basic-launcher    # Standard (BLE + launcher)
+pio run -e m5stack-basic-launcher-ble # BLE + launcher (deprecated, merged)
+pio run -e m5stack-basic             # No launcher
+pio run -e m5stack-basic-ble         # BLE, no launcher
 ```
 
-`.env` is gitignored. `.env.example` is committed as a template.
+### Upload
+```bash
+pio run -e m5stack-basic-launcher -t upload
+```
+
+### Monitor
+```bash
+screen /dev/ttyUSB0 115200
+# or
+python3 -m serial.tools.miniterm /dev/ttyUSB0 115200
+```
+
+## M5Launcher Integration
+1. Copy `firmware.bin` to SD card: `SD:/firmwares/flock-you/firmware.bin`
+2. Boot M5Launcher - select flock-you
+3. Data written to `SD:/firmwares/flock-you/data/`
+
+## Flask Web App (Host-side)
+
+See `api/flockyou.py` for the Flask backend that:
+- Receives detections via serial/websocket
+- Matches GPS coordinates temporally
+- Serves data via `/api/files`, `/api/file/<name>`
+- Exports CSV/KML
+
+Run:
+```bash
+cd api
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env  # add WiFi creds if needed
+python3 flockyou.py
+```
+
+## WiFi Credentials Security
+
+- **`.env`** - gitignored, single source of truth for host Flask app
+- **Compile-time injection** - `generate_build_flags.py` reads `.env`, injects into firmware
+- **No secrets** in source code, no runtime config files on device
+- **`.env.example`** - template committed to repo
+
+## File Formats
+
+### Detection JSON (`flock_you-YYYY-MM-DD.json`)
+```json
+{
+  "mac": "aa:bb:cc:dd:ee:ff",
+  "method": "wifi|ble|subghz|lora",
+  "rssi": -45,
+  "channel": 6,
+  "first": 1704067200,
+  "last": 1704067260,
+  "count": 5,
+  "ssid": "Flock Camera net.",
+  "confidence": 85,
+  "gps": {"lat": 40.7128, "lon": -74.0060, "alt": 10.5, "speed": 0.0, "satellites": 8, "hdop": 1.2},
+  "lora": {"available": true},
+  "subghz": {"freq_mhz": 433, "rssi": -50, "band": 1, "type": "tpms", "len": 10}
+}
+```
+
+### Waypoint JSON (`waypoints-YYYY-MM-DD.json`)
+```json
+{"ts":1704067200,"label":"manual","lat":40.7128,"lon":-74.0060,"alt":10.5,"sat":8,"hdop":1.2}
+```
+
+## Links
+
+- **M5Stack Basic:** https://shop.m5stack.com/products/m5stack-basic-v2-6
+- **GPS Unit v1.1:** https://shop.m5stack.com/products/gps-unit-v1-1
+- **LoRa Module 433MHz:** https://shop.m5stack.com/products/lora-module-433mhz
+- **CC1101 Module:** https://shop.m5stack.com/products/m5stack-cc1101-module-855-925mhz
+- **M5Launcher:** https://github.com/bmorcelli/M5Launcher
+- **Meshtastic:** https://meshtastic.org/
+- **Reticulum:** https://github.com/markqvist/Reticulum
