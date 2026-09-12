@@ -37,6 +37,7 @@ static bool waitSelect(const char *title, const char *optA, const char *optB,
     M5.update();
     delay(5);
   }
+  unsigned long start = millis();
   while (true)
   {
     M5.update();
@@ -44,6 +45,8 @@ static bool waitSelect(const char *title, const char *optA, const char *optB,
       return false; // Left = optA = No
     if (M5.BtnB.wasPressed())
       return true; // Right = optB = Yes
+    if (millis() - start > 5000)
+      return defaultB; // Auto-select after 5 seconds timeout
     delay(10);
   }
 }
@@ -96,6 +99,18 @@ void notify(const char *msg)
 
 static bool sdPresent()
 {
+  // M5Stack Basic has an SD card slot with a mechanical detect switch.
+  // When no card is inserted, the CD pin is pulled to a known state.
+  // On M5Stack Basic, SD card detect is on GPIO2 (CD pin is LOW when card present).
+  pinMode(2, INPUT_PULLUP);
+  delay(1);  // let pin settle
+  bool cardPresent = (digitalRead(2) == LOW);
+  
+  if (!cardPresent) {
+    return false;  // No SD card — use SPIFFS
+  }
+  
+  // SD card physically present — initialize it
   SPI.begin();
   return SD.begin(SD_CS_PIN, SPI, 25000000);
 }
@@ -112,7 +127,7 @@ StorageResult storageBootMenu()
 
   r.sdMounted = true;
 
-  if (!waitSelect("Storage?", "SPIFFS", "SD Card", false))
+  if (!waitSelect("Storage?", "SPIFFS", "SD Card", true))
   {
     notify("Using SPIFFS");
     return r;

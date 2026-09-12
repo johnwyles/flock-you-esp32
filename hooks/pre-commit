@@ -1,0 +1,17 @@
+#!/bin/bash
+# pre-commit hook — require signed commits
+#
+# Copy this file to .git/hooks/pre-commit and make it executable:
+#   cp hooks/pre-commit .git/hooks/pre-commit
+#   chmod +x .git/hooks/pre-commit
+#
+# This hook verifies that GPG signed commits are enabled, so every commit
+# must be signed with the committer's GPG key.
+
+if ! git config --get commit.gpgsign | grep -q true; then
+    echo "ERROR: GPG signed commits are required."
+    echo "Run: git config --global commit.gpgsign true"
+    exit 1
+fi
+
+exit 0

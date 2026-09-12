@@ -14,11 +14,27 @@
 #define FY_WS_SUBNET     IPAddress(255, 255, 255, 0)
 #define FY_WS_PORT       80
 
-// Read credentials from compile-time defines
+// Read credentials — prefers compile-time defines from .env (via generate_build_flags.py)
+// Falls back to hardcoded defaults. Ensures password is at least 8 chars (WPA2 minimum).
 static void fyWsReadConfig(char *ssidBuf, size_t ssidLen,
                            char *passBuf, size_t passLen) {
+#ifdef FY_WS_SSID
+  strncpy(ssidBuf, FY_WS_SSID, ssidLen);
+#else
   strncpy(ssidBuf, FY_WS_DEFAULT_SSID, ssidLen);
+#endif
+  ssidBuf[ssidLen - 1] = '\0';
+
+#ifdef FY_WS_PASS
+  strncpy(passBuf, FY_WS_PASS, passLen);
+  // If compile-time password is too short (< 8 chars), fall back to default
+  if (strlen(passBuf) < 8) {
+    strncpy(passBuf, FY_WS_DEFAULT_PASS, passLen);
+  }
+#else
   strncpy(passBuf, FY_WS_DEFAULT_PASS, passLen);
+#endif
+  passBuf[passLen - 1] = '\0';
 }
 
 #endif /* FY_WEBSERVER_CONFIG_H */

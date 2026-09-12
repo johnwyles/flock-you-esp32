@@ -71,6 +71,8 @@
 #include "fy_cc1101.h"
 #include "fy_webserver.h"
 #include "fy_hardware.h"
+#include "fy_serial.h"
+#include "fy_globals.h"
 
 // M5StickC Plus SE — ST7789v2 1.14" display (240×135 landscape)
 #if defined(USE_M5STICKC_PLUS_SE)
@@ -391,6 +393,8 @@ static void fyDailySessionPath(char *out, size_t len)
 
 #define ALERT_QUEUE_SIZE 32
 
+#ifndef ALERT_TYPE_DEFINED
+#define ALERT_TYPE_DEFINED
 typedef enum : uint8_t
 {
   ALERT_OUI_ADDR2 = 0,
@@ -413,7 +417,10 @@ typedef enum : uint8_t
   ALERT_BLE_RAVEN_UUID = 9, // Raven/Flock 128-bit BLE service UUID
   ALERT_BLE_NAME = 10,      // BLE device-name substring match
 } AlertType;
+#endif
 
+#ifndef ALERT_ENTRY_DEFINED
+#define ALERT_ENTRY_DEFINED
 typedef struct
 {
   AlertType type;
@@ -424,13 +431,14 @@ typedef struct
   char frameKind[12];
   uint8_t confidence; // 0–100 computed in callback, emitted in JSON
 } AlertEntry;
+#endif
 
 static volatile AlertEntry alertQueue[ALERT_QUEUE_SIZE];
 static volatile size_t alertHead = 0;
 static volatile size_t alertTail = 0;
 static portMUX_TYPE queueMux = portMUX_INITIALIZER_UNLOCKED;
 
-static void IRAM_ATTR enqueueAlert(AlertType type, const uint8_t *mac, int8_t rssi,
+void IRAM_ATTR enqueueAlert(AlertType type, const uint8_t *mac, int8_t rssi,
                                    uint8_t ch, const char *ssid, const char *kind,
                                    uint8_t confidence)
 {
@@ -852,7 +860,7 @@ static void bleScanTick(bool &promiscPaused)
 
 #endif // ENABLE_BLE_SCAN
 
-static void bleInjectFake() {
+void bleInjectFake() {
 #if defined(ENABLE_BLE_SCAN) && ENABLE_BLE_SCAN
   static uint8_t fakeMac[6] = {0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6};
   fakeMac[5]++;
@@ -895,9 +903,9 @@ typedef struct
 static FYDetection fyDet[MAX_DETECTIONS];
 static uint8_t gDeviceMac[6];
 static uint8_t gFakeMacCounter = 0;
-static int fyDetCount = 0;
-static bool fySpiffsReady = false;
-static bool fyDirty = false;
+int fyDetCount = 0;
+bool fySpiffsReady = false;
+bool fyDirty = false;
 bool gHasGPS = false;
 bool gHasLoRa = false;
 bool gHasCC1101 = false;
@@ -934,8 +942,9 @@ bool cc1101AddDetection(const SubGHzDetection &det) {
   return true;
 }
 
-static bool gWebServerMode = false;
-static bool gSdRawReady = false;
+bool gWebServerMode = false;
+int gDebugLevel = 0;        // 0=off, 1=normal, 2=verbose
+bool gSdRawReady = false;
 static unsigned long fyLastSaveAt = 0;
 static int fyLastSaveCount = 0;
 
@@ -943,7 +952,7 @@ static int fyLastSaveCount = 0;
 // STATE
 // ============================================================
 
-static uint8_t currentChannel = 1;
+uint8_t currentChannel = 1;
 static size_t customChannelIndex = 0;
 static size_t fullHopIndex = 0;
 static unsigned long lastHop = 0;
@@ -979,7 +988,7 @@ static bool fyPromiscPaused = false;
 // trigger this (they have no WiFi channel concept -- e.channel is always 0
 // for them -- and BLE_COEX_MODE's scan runs independently of currentChannel
 // anyway, so there'd be nothing meaningful to lock to).
-static bool channelLockActive = false;
+bool channelLockActive = false;
 static unsigned long channelLockLastHitAt = 0;
 #define CHANNEL_LOCK_TIMEOUT_MS 5000UL
 
@@ -1254,7 +1263,7 @@ static bool IRAM_ATTR isFcnSsid(const char *ssid)
   return ssid && (strcmp(ssid, ssid_exact_flock_cam_net) == 0);
 }
 
-static const char *channelModeName()
+const char *channelModeName()
 {
   switch (CHANNEL_MODE)
   {
@@ -1318,7 +1327,7 @@ static void stopSniffing(const char *reason)
   dualPrintf("[flockyou] sniffing stopped: %s\n", reason);
 }
 
-static void applyInitialChannel()
+void applyInitialChannel()
 {
 #if CHANNEL_MODE == CHANNEL_MODE_SINGLE
   currentChannel = SINGLE_CHANNEL;
@@ -1805,7 +1814,7 @@ static uint16_t fyFindNextBootCounter()
   return maxSeq + 1;
 }
 
-static void fySaveSession()
+void fySaveSession()
 {
   if (!fySpiffsReady)
     return;
@@ -2361,10 +2370,10 @@ void m5basicDrawDetList() {
 }
 
 // Webserver activity log state
-static bool mb_showWebLog = false;
-static char mb_webLog[120] = {0};
-static unsigned long mb_webLogMs = 0;
-static const char *mb_wifiStatus = "disconnected";
+bool mb_showWebLog = false;
+char mb_webLog[120] = {0};
+unsigned long mb_webLogMs = 0;
+const char *mb_wifiStatus = "disconnected";
 
 // Draw webserver activity log
 void m5basicDrawWebLog() {
@@ -2818,7 +2827,11 @@ void loop()
   // GPS read (non-blocking, ~10ms)
   if (gHasGPS) gpsRead();
 
-  // Web server mode
+  // Serial debug commands (moved to fy_serial.cpp) — must run every iteration
+  // even when the web server is active, so we can CMD:WEB to stop it
+  fySerialProcess();
+
+  // Web server mode — pause scanning while AP is active
   if (gWebServerMode) {
     fyWebServerTick();
     // Pause promiscuous and scanning while webserver is active
@@ -2897,104 +2910,6 @@ void loop()
 #endif
   }
 #endif
-
-  // Serial command parser
-  if (Serial.available()) {
-    String cmd = Serial.readStringUntil('\n');
-    cmd.trim();
-    if (cmd.equalsIgnoreCase("CMD:HELP")) {
-      Serial.println("[flockyou] Commands: FAKE, FAKE_WIFI, FAKE_BLE, FAKE_TPMS, FAKE_REMOTE, FAKE_WEATHER, FAKE_GPS, FAKE_LORA, CLEAR, STATUS, HELP");
-    } else if (cmd.equalsIgnoreCase("CMD:FAKE")) {
-      // Inject one of each active module type
-      static uint8_t fakeMac[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
-      fakeMac[5]++;
-      channelLockActive = false;
-      enqueueAlert(ALERT_OUI_ADDR2, fakeMac, -45, 1, nullptr, "test", 75);
-      Serial.println("[flockyou] Fake WiFi detection injected");
-      if (gHasGPS) {
-        waypointRecord("fake_gps");
-        Serial.println("[flockyou] Fake GPS waypoint injected");
-      }
-      if (gHasCC1101) {
-        cc1101AddDetectionFake(CC1101_SIG_TPMS, 433920, -50);
-        cc1101AddDetectionFake(CC1101_SIG_REMOTE, 315000, -60);
-        cc1101AddDetectionFake(CC1101_SIG_WEATHER, 433500, -55);
-        Serial.println("[flockyou] Fake CC1101 detections injected");
-      }
-      if (gHasLoRa) {
-        loraAddDetectionFake(915000, -65);
-        Serial.println("[flockyou] Fake LoRa detection injected");
-      }
-#if defined(ENABLE_BLE_SCAN) && ENABLE_BLE_SCAN
-      bleInjectFake();
-      Serial.println("[flockyou] Fake BLE detection injected");
-#endif
-    } else if (cmd.equalsIgnoreCase("CMD:FAKE_WIFI")) {
-      static uint8_t fakeMac[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
-      fakeMac[5]++;
-      channelLockActive = false;
-      enqueueAlert(ALERT_OUI_ADDR2, fakeMac, -45, 1, nullptr, "test", 75);
-      Serial.println("[flockyou] Fake WiFi detection injected");
-    } else if (cmd.equalsIgnoreCase("CMD:FAKE_BLE")) {
-#if defined(ENABLE_BLE_SCAN) && ENABLE_BLE_SCAN
-      bleInjectFake();
-      Serial.println("[flockyou] Fake BLE detection injected");
-#else
-      Serial.println("[flockyou] BLE not enabled");
-#endif
-    } else if (cmd.equalsIgnoreCase("CMD:FAKE_TPMS")) {
-      if (gHasCC1101) {
-        cc1101AddDetectionFake(CC1101_SIG_TPMS, 433920, -50);
-        Serial.println("[flockyou] Fake TPMS detection injected");
-      } else {
-        Serial.println("[flockyou] CC1101 not present");
-      }
-    } else if (cmd.equalsIgnoreCase("CMD:FAKE_REMOTE")) {
-      if (gHasCC1101) {
-        cc1101AddDetectionFake(CC1101_SIG_REMOTE, 315000, -60);
-        Serial.println("[flockyou] Fake remote detection injected");
-      } else {
-        Serial.println("[flockyou] CC1101 not present");
-      }
-    } else if (cmd.equalsIgnoreCase("CMD:FAKE_WEATHER")) {
-      if (gHasCC1101) {
-        cc1101AddDetectionFake(CC1101_SIG_WEATHER, 433500, -55);
-        Serial.println("[flockyou] Fake weather detection injected");
-      } else {
-        Serial.println("[flockyou] CC1101 not present");
-      }
-    } else if (cmd.equalsIgnoreCase("CMD:FAKE_GPS")) {
-      if (gHasGPS) {
-        waypointRecord("fake_gps");
-        Serial.println("[flockyou] Fake GPS waypoint injected");
-      } else {
-        Serial.println("[flockyou] GPS not present");
-      }
-    } else if (cmd.equalsIgnoreCase("CMD:FAKE_LORA")) {
-      if (gHasLoRa) {
-        loraAddDetectionFake(915000, -65);
-        Serial.println("[flockyou] Fake LoRa detection injected");
-      } else {
-        Serial.println("[flockyou] LoRa not present");
-      }
-    } else if (cmd.equalsIgnoreCase("CMD:CLEAR")) {
-      fyDetCount = 0;
-      fyDirty = false;
-      Serial.println("[flockyou] All detections cleared");
-    } else if (cmd.equalsIgnoreCase("CMD:STATUS")) {
-      Serial.printf("[flockyou] Detections: %d/%d\n", fyDetCount, MAX_DETECTIONS);
-      Serial.printf("[flockyou] GPS: %s, LoRa: %s, CC1101: %s\n",
-                    gHasGPS ? "yes" : "no",
-                    gHasLoRa ? "yes" : "no",
-                    gHasCC1101 ? "yes" : "no");
-#if defined(ENABLE_BLE_SCAN) && ENABLE_BLE_SCAN
-      Serial.printf("[flockyou] BLE: enabled\n");
-#else
-      Serial.printf("[flockyou] BLE: disabled\n");
-#endif
-      Serial.printf("[flockyou] Free heap: %d bytes\n", ESP.getFreeHeap());
-    }
-  }
 
   delay(1);
 }
