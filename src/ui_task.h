@@ -47,6 +47,11 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
+// Forward declarations for web server display function (defined in main.cpp)
+extern bool gWebServerMode;
+extern bool mb_showWebLog;
+extern void m5basicDrawWebLog();
+
 // ── Continuous "scanning status" snapshot ─────────────────────────────────
 // Overwritten every loop() iteration by uiPublishScan(); the UI task reads
 // its own copy each poll and redraws (each board's *Scanning() function is
@@ -306,19 +311,29 @@ static void uiTaskFn(void* pv) {
 #endif
 
 #if defined(USE_M5BASIC)
-        if (alertWins) {
-            m5basicDetection(alert.method, alert.mac, alert.confidence, alert.rssi,
-                              alert.channel, alert.ssid, alert.detCount, alert.lastSeenMs);
+        if (gWebServerMode) {
+            // Show web server status screen instead of scanning
+            if (mb_showWebLog) {
+                m5basicDrawWebLog();
+            } else {
+                m5basicScanning(scan.channel, scan.modeName, scan.detCount, now,
+                                scan.spiffsOk, (int)FY_OUI_HIGH_COUNT, (int)FY_OUI_MFR_COUNT);
+            }
+        } else {
+            if (alertWins) {
+                m5basicDetection(alert.method, alert.mac, alert.confidence, alert.rssi,
+                                  alert.channel, alert.ssid, alert.detCount, alert.lastSeenMs);
+            }
+            m5basicScanning(scan.channel, scan.modeName, scan.detCount, now,
+                            scan.spiffsOk, (int)FY_OUI_HIGH_COUNT, (int)FY_OUI_MFR_COUNT);
         }
-        m5basicScanning(scan.channel, scan.modeName, scan.detCount, now,
-                        scan.spiffsOk, (int)FY_OUI_HIGH_COUNT, (int)FY_OUI_MFR_COUNT);
         {
             int btn = m5basicButtonTick();
             if (btn == 1 || btn == 2 || btn == 3 || btn == 4) uiSetButtonAction((uint8_t)btn);
         }
-#if defined(USE_M5CORE2_AWS)
+# if defined(USE_M5CORE2_AWS)
         m5basicVibrationTick();
-#endif
+# endif
         {
             uint8_t req = uiTakeAudioRequest();
             if (req == 1)      uiPlayChirp();

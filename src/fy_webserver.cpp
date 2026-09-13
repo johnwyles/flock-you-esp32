@@ -37,17 +37,30 @@ void fyWebServerStart() {
 
   // Full WiFi driver restart for clean state transition from
   // promiscuous/scanning mode to AP mode.
+  // Use Arduino WiFi.softAP() which handles netif creation, DHCP,
+  // and IP assignment in one call. We must fully re-initialize WiFi
+  // because the initial setup used ESP-IDF APIs without the Arduino
+  // TCP/IP stack. 
   esp_wifi_stop();
   delay(200);
 
-  // Use Arduino WiFi.softAP() which handles netif creation, DHCP,
-  // and IP assignment in one call. We need this because the initial
-  // WiFi setup used ESP-IDF APIs (esp_wifi_init/start with MODE_NULL),
-  // so the Arduino AP netif was never created. WiFi.softAP() creates
-  // it and configures everything correctly.
+  // Force Arduino WiFi low-level re-initialization by toggling mode.
+  // WiFi.mode() -> if current mode == requested mode, return true (no init).
+  // We need to trick it into calling wifiLowLevelInit() by setting
+  // mode to NULL first, then back to AP in softAP().
+  // But wifiLowLevelInit checks lowLevelInitDone flag...
+  // Instead, just use WiFi.softAP() which calls mode() internally.
+  // The key: after esp_wifi_stop(), WiFi is in STOPPED state.
+  // WiFi.softAP() will call wifiLowLevelInit() if lowLevelInitDone==false,
+  // or just esp_wifi_set_mode + esp_wifi_start if already init'd.
   uint8_t channel = 6;
   WiFi.softAP(ssid, pass, channel, false, 4, false);
   WiFi.softAPConfig(FY_WS_IP, FY_WS_GATEWAY, FY_WS_SUBNET);
+  // WiFi.softAP() sets mode + config but does NOT call esp_wifi_start()
+  // when WiFi was previously started via ESP-IDF APIs in setup().
+  // Must explicitly start WiFi for the AP to broadcast.
+  esp_wifi_start();
+  delay(200);
 
   mb_wifiStatus = "connecting...";
   snprintf(mb_webLog, sizeof(mb_webLog), "AP: %s", ssid);
