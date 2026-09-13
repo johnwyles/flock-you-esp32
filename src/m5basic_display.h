@@ -686,8 +686,9 @@ static void m5basicDetection(const char* method, const char* mac,
 
 // ── Button tick ───────────────────────────────────────────────────────────────
 // Call from loop() every iteration.
-// Returns: 0=none  1=A(save)  2=B(brightness)  3=C(hop/clear)
+// Returns: 0=none  1=A(save)  2=B(brightness)  3=C(hop/clear)  4=C long(web toggle)
 bool waypointRecordManual(const char *label);
+extern bool gWebServerMode;
 
 static int m5basicButtonTick() {
     M5.update();
@@ -695,6 +696,9 @@ static int m5basicButtonTick() {
     if (M5.BtnB.wasPressed()) {
         waypointRecordManual("manual");
         return 2;
+    }
+    if (M5.BtnC.wasHold()) {
+        return 4;  // Btn C long press = toggle web server
     }
     if (M5.BtnC.wasPressed()) {
         mb_needsRedraw = true;

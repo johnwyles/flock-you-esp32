@@ -35,7 +35,7 @@
 //   uiForceC5Redraw()      — request an out-of-cycle C5 scanning redraw
 //                             (used by the HAS_SIMPLE_BUTTON handler).
 //   uiTakeButtonAction()   — call once per loop() iteration; returns
-//                             0=none 1=save 3=hop (mirrors the old
+//                             0=none 1=save 3=det-list 4=web-toggle (mirrors
 //                             m5basicButtonTick()/m5stickcButtonTick()
 //                             return codes for those two actions).
 //   uiRequestAudio(which)  — called internally by newDetectChirp()/
@@ -180,7 +180,7 @@ static void uiPublishAlert(const char* method, const char* mac, uint8_t confiden
 // uiTaskFn). loop() consumes whichever action (if any) got recorded since
 // its last check. Codes match the old m5basicButtonTick()/
 // m5stickcButtonTick() return values for the two actions loop() must act
-// on: 1 = Btn A (save session), 3 = Btn C/B (force channel hop). M5Basic's
+// on: 1 = Btn A (save), 3 = Btn C short (det list), 4 = Btn C long (web toggle).
 // brightness cycle (code 2) is fully handled inside the button-tick call
 // itself and needs no feedback here.
 static volatile uint8_t g_uiButtonAction = 0;
@@ -314,7 +314,7 @@ static void uiTaskFn(void* pv) {
                         scan.spiffsOk, (int)FY_OUI_HIGH_COUNT, (int)FY_OUI_MFR_COUNT);
         {
             int btn = m5basicButtonTick();
-            if (btn == 1 || btn == 2 || btn == 3) uiSetButtonAction((uint8_t)btn);
+            if (btn == 1 || btn == 2 || btn == 3 || btn == 4) uiSetButtonAction((uint8_t)btn);
         }
 #if defined(USE_M5CORE2_AWS)
         m5basicVibrationTick();
@@ -335,7 +335,7 @@ static void uiTaskFn(void* pv) {
                          scan.spiffsOk, (int)FY_OUI_HIGH_COUNT, (int)FY_OUI_MFR_COUNT);
         {
             int btn = m5stickcButtonTick();
-            if (btn == 1 || btn == 2 || btn == 3) uiSetButtonAction((uint8_t)btn);
+            if (btn == 1 || btn == 2 || btn == 3 || btn == 4) uiSetButtonAction((uint8_t)btn);
         }
 #endif
 

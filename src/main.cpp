@@ -2891,11 +2891,22 @@ void loop()
     }
     else if (btn == 3)
     {
-      customChannelIndex = (customChannelIndex + 1) % customChannelCount;
-      currentChannel = customChannels[customChannelIndex];
-      esp_wifi_set_channel(currentChannel, WIFI_SECOND_CHAN_NONE);
-      lastHop = millis();
-      Serial.printf("[flockyou] Manual ch hop -> %u (button)\n", currentChannel);
+      // Btn C short: show detection list (clear alert display, force redraw)
+      mb_needsRedraw = true;
+      mb_inAlert = false;
+      Serial.println("[flockyou] Det list (button)");
+    }
+    else if (btn == 4)
+    {
+      // Btn C long: toggle web server
+      if (gWebServerMode) {
+        fyWebServerStop();
+        gWebServerMode = false;
+      } else {
+        fyWebServerStart();
+        gWebServerMode = true;
+      }
+      Serial.printf("[flockyou] Web server: %s\n", gWebServerMode ? "ON" : "OFF");
     }
   }
 #endif
