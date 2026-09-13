@@ -2,6 +2,7 @@
 // Supports M5Stack GPS Unit v1.1 (AT6668) and similar I2C GPS modules
 
 #include "fy_gps.h"
+#include "fy_globals.h"
 #include <Wire.h>
 #include <time.h>
 
@@ -88,10 +89,17 @@ static bool waypointWriteFile(const char *path, const char *entry) {
 
 static void waypointRollDate(char *path, size_t len) {
   time_t now = time(nullptr);
-  struct tm tm;
-  localtime_r(&now, &tm);
-  snprintf(path, len, "/waypoints-%04d-%02d-%02d.json",
-           tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
+  if (now > 86400) { // time is valid
+    struct tm tm;
+    localtime_r(&now, &tm);
+    snprintf(path, len, "/waypoints-%04d-%02d-%02d.json",
+             tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
+  } else {
+    // No RTC/NTP — fall back to firmware build date
+    int year, month, day;
+    fyGetBuildDate(&year, &month, &day);
+    snprintf(path, len, "/waypoints-%04d-%02d-%02d.json", year, month, day);
+  }
 }
 
 bool waypointRecordManual(const char *label) {

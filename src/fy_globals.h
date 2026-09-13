@@ -71,6 +71,10 @@ extern bool fyWebServerActive();
 // ── Storage / session persistence (defined in main.cpp) ────────────────────────
 extern void fySaveSession();
 
+// ── Build date fallback (defined in main.cpp, used by fy_gps.cpp) ─────────────
+// Parses __DATE__ into year/month/day when time() returns 0 (no RTC/NTP).
+extern void fyGetBuildDate(int *year, int *month, int *day);
+
 // ── BLE debugging (defined in main.cpp when BLE enabled) ─────────────────────
 #if defined(ENABLE_BLE_SCAN) && ENABLE_BLE_SCAN
 extern void bleInjectFake();

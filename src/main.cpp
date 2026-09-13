@@ -364,20 +364,40 @@ static const char *ssid_exact_flock_cam_net = "Flock Camera net.";
 #define FY_SESSION_TMP "session.tmp"
 #define AUTOSAVE_INTERVAL_MS 60000
 
+// Build timestamp fallback for file dating when no RTC/NTP is available.
+// The ESP32-PICO-D4 has no hardware RTC, so time() returns 0 at boot.
+// Use the firmware compile timestamp (YYYY, MM, DD from __DATE__) as
+// a fallback so session files always have a meaningful date.
+#define FY_BUILD_YEAR  (__DATE__ + 7)
+#define FY_BUILD_MONTH (__DATE__ + 4)
+#define FY_BUILD_DAY   (__DATE__ + 0)
+
+// Parse __DATE__ (e.g. "Sep 12 2026") into numbers at runtime
+void fyGetBuildDate(int *year, int *month, int *day) {
+  static const char *months = "JanFebMarAprMayJunJulAugSepOctNovDec";
+  char m[4] = {0};
+  memcpy(m, __DATE__, 3);
+  const char *p = strstr(months, m);
+  *month = p ? ((int)(p - months) / 3 + 1) : 1;
+  *day = atoi(__DATE__ + 4);
+  *year = atoi(__DATE__ + 7);
+}
+
 // Generate daily filename: /flock_you-YYYY-MM-DD.json
 static void fyDailySessionPath(char *out, size_t len)
 {
   time_t now = time(nullptr);
-  // If time is not set (returns 0 → 1970-01-01), use a fallback so save doesn't fail
-  if (now < 86400) { // before 1971-01-01
-    const char *bootDate = "1970-01-01";
-    snprintf(out, len, "flock_you-%s.json", bootDate);
-    return;
+  if (now > 86400) { // time is valid (after 1971-01-01)
+    struct tm tm;
+    localtime_r(&now, &tm);
+    snprintf(out, len, "flock_you-%04d-%02d-%02d.json",
+             tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
+  } else {
+    // No RTC/NTP — fall back to firmware build date
+    int year, month, day;
+    fyGetBuildDate(&year, &month, &day);
+    snprintf(out, len, "flock_you-%04d-%02d-%02d.json", year, month, day);
   }
-  struct tm tm;
-  localtime_r(&now, &tm);
-  snprintf(out, len, "flock_you-%04d-%02d-%02d.json",
-           tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
 }
 // Confidence weights, OUI byte tables, and sequential-MAC tracking moved to
 // fy_confidence.h (included further below, after AlertType/isFcnSsid are
