@@ -1619,6 +1619,19 @@ static size_t fySerializeDet(const FYDetection &d, char *dst, size_t cap)
       n += m;
     }
   }
+  // Append CC1101 sub-GHz data if module detected and detection has sub-GHz data
+  if (gHasCC1101 && d.hasSubGHz) {
+    char sgBuf[120];
+    int m = snprintf(sgBuf, sizeof(sgBuf),
+                     ",\"subghz\":{\"freq_mhz\":%u,\"rssi\":%d,\"band\":%u,\"type\":\"%s\",\"len\":%u}",
+                     (unsigned)d.subGHzFreqMhz, (int)d.subGHzRssi,
+                     (unsigned)d.subGHzBand, d.subGHzType, (unsigned)d.subGHzLen);
+    if (m > 0 && (size_t)(n + m) < cap) {
+      memcpy(dst + n, sgBuf, m);
+      n += m;
+    }
+  }
+  // Append LoRa flag if module detected
   // Append LoRa flag if module detected
   if (gHasLoRa) {
     char loraBuf[40];
