@@ -13,7 +13,10 @@ File fyOpen(const char *path, const char *mode)
     if (!sdPath.startsWith("/")) sdPath = String("/") + sdPath;
     return SD.open(sdPath.c_str(), mode);
   }
-  return SPIFFS.open(path, mode);
+  // SPIFFS requires leading "/" on all paths
+  String spiffsPath = path;
+  if (!spiffsPath.startsWith("/")) spiffsPath = String("/") + spiffsPath;
+  return SPIFFS.open(spiffsPath.c_str(), mode);
 }
 
 bool fyExists(const char *path)
@@ -24,7 +27,10 @@ bool fyExists(const char *path)
     if (!sdPath.startsWith("/")) sdPath = String("/") + sdPath;
     return SD.exists(sdPath);
   }
-  return SPIFFS.exists(path);
+  // SPIFFS requires leading "/"
+  String spiffsPath = path;
+  if (!spiffsPath.startsWith("/")) spiffsPath = String("/") + spiffsPath;
+  return SPIFFS.exists(spiffsPath);
 }
 
 bool fyRemove(const char *path)
@@ -35,7 +41,10 @@ bool fyRemove(const char *path)
     if (!sdPath.startsWith("/")) sdPath = String("/") + sdPath;
     return SD.remove(sdPath);
   }
-  return SPIFFS.remove(path);
+  // SPIFFS requires leading "/"
+  String spiffsPath = path;
+  if (!spiffsPath.startsWith("/")) spiffsPath = String("/") + spiffsPath;
+  return SPIFFS.remove(spiffsPath);
 }
 
 bool fyRename(const char *src, const char *dst)
@@ -48,7 +57,12 @@ bool fyRename(const char *src, const char *dst)
     if (!d.startsWith("/")) d = String("/") + d;
     return SD.rename(s, d);
   }
-  return SPIFFS.rename(src, dst);
+  // SPIFFS requires leading "/"
+  String spiffsSrc = String(src);
+  if (!spiffsSrc.startsWith("/")) spiffsSrc = String("/") + spiffsSrc;
+  String spiffsDst = String(dst);
+  if (!spiffsDst.startsWith("/")) spiffsDst = String("/") + spiffsDst;
+  return SPIFFS.rename(spiffsSrc.c_str(), spiffsDst.c_str());
 }
 
 bool fyInitStorage(StorageResult res)

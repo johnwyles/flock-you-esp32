@@ -368,6 +368,12 @@ static const char *ssid_exact_flock_cam_net = "Flock Camera net.";
 static void fyDailySessionPath(char *out, size_t len)
 {
   time_t now = time(nullptr);
+  // If time is not set (returns 0 → 1970-01-01), use a fallback so save doesn't fail
+  if (now < 86400) { // before 1971-01-01
+    const char *bootDate = "1970-01-01";
+    snprintf(out, len, "flock_you-%s.json", bootDate);
+    return;
+  }
   struct tm tm;
   localtime_r(&now, &tm);
   snprintf(out, len, "flock_you-%04d-%02d-%02d.json",
@@ -1598,13 +1604,21 @@ static size_t fySerializeDet(const FYDetection &d, char *dst, size_t cap)
 {
   char ssidEsc[sizeof(d.ssid) * 6 + 1];
   jsonEscape(ssidEsc, sizeof(ssidEsc), d.ssid);
+  // Determine protocol: BLE, sub-GHz (CC1101/LoRa), or WiFi band
+  bool isBle = (strncmp(d.method, "ble_", 4) == 0);
+  bool isSubGhz = (strcmp(d.method, "subghz") == 0 || strcmp(d.method, "lora") == 0);
+  const char *protocol = isBle ? "ble"
+                     : isSubGhz ? "sub_ghz"
+                     : channelBand(d.channel);
+  uint16_t freqMhz = isBle || isSubGhz ? 0 : (uint16_t)channelFreqMhz(d.channel);
   int n = snprintf(dst, cap,
                    "{\"mac\":\"%s\",\"method\":\"%s\",\"rssi\":%d,\"channel\":%u,"
                    "\"first\":%lu,\"last\":%lu,\"count\":%u,\"ssid\":\"%s\","
-                   "\"confidence\":%u",
+                   "\"protocol\":\"%s\",\"frequency\":%u,\"confidence\":%u",
                    d.mac, d.method, d.rssi, (unsigned)d.channel,
                    (unsigned long)d.firstSeen, (unsigned long)d.lastSeen,
-                   (unsigned)d.count, ssidEsc, (unsigned)d.maxConfidence);
+                   (unsigned)d.count, ssidEsc,
+                   protocol, (unsigned)freqMhz, (unsigned)d.maxConfidence);
   if (n == 0 || (size_t)n >= cap) return 0;
   // Append GPS if available and fix valid
   if (gHasGPS && d.hasGps) {
@@ -1631,7 +1645,6 @@ static size_t fySerializeDet(const FYDetection &d, char *dst, size_t cap)
       n += m;
     }
   }
-  // Append LoRa flag if module detected
   // Append LoRa flag if module detected
   if (gHasLoRa) {
     char loraBuf[40];
@@ -1838,8 +1851,8 @@ void fySaveSession()
   int savedCount = fyDetCount;
   char dailyPath[32];
   fyDailySessionPath(dailyPath, sizeof(dailyPath));
-  char tmpPath[32];
-  snprintf(tmpPath, sizeof(tmpPath), "%s.tmp", dailyPath);
+  char tmpPath[64];
+  snprintf(tmpPath, sizeof(tmpPath), "/%s.tmp", dailyPath);
   File f = fyOpen(tmpPath, "w");
   if (!f)
   {
