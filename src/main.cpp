@@ -365,45 +365,27 @@ static const char *ssid_exact_flock_cam_net = "Flock Camera net.";
 #define AUTOSAVE_INTERVAL_MS 60000
 
 // Build timestamp fallback for file dating when no RTC/NTP is available.
-// The ESP32-PICO-D4 has no hardware RTC, so time() returns 0 at boot.
-// Use the firmware compile timestamp (YYYY, MM, DD from __DATE__) as
-// a fallback so session files always have a meaningful date.
-#define FY_BUILD_YEAR  (__DATE__ + 7)
-#define FY_BUILD_MONTH (__DATE__ + 4)
-#define FY_BUILD_DAY   (__DATE__ + 0)
+// The ESP32-PICO-D4 has no hardware RTC.  We use sequential numbering
+// (flock_you-0001.json, flock_you-0002.json, ... 0001-9999) scanned from
+// existing files at boot, so filenames are deterministic and never collide.
 
-// Parse __DATE__ (e.g. "Sep 12 2026") into numbers at runtime
-void fyGetBuildDate(int *year, int *month, int *day) {
-  static const char *months = "JanFebMarAprMayJunJulAugSepOctNovDec";
-  char m[4] = {0};
-  memcpy(m, __DATE__, 3);
-  const char *p = strstr(months, m);
-  *month = p ? ((int)(p - months) / 3 + 1) : 1;
-  *day = atoi(__DATE__ + 4);
-  *year = atoi(__DATE__ + 7);
-}
+// Sequential session filename: /flock_you-NNNN.json
+// The ESP32-PICO-D4 has no hardware RTC; use sequential numbering per boot.
+static uint16_t fySessionSeq = 0;
 
-// Generate daily filename: /flock_you-YYYY-MM-DD.json
-static void fyDailySessionPath(char *out, size_t len)
+// Generate sequential filename: /flock_you-NNNN.json
+static void fySessionPath(char *out, size_t len)
 {
-  time_t now = time(nullptr);
-  if (now > 86400) { // time is valid (after 1971-01-01)
-    struct tm tm;
-    localtime_r(&now, &tm);
-    snprintf(out, len, "flock_you-%04d-%02d-%02d.json",
-             tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
-  } else {
-    // No RTC/NTP — fall back to firmware build date
-    int year, month, day;
-    fyGetBuildDate(&year, &month, &day);
-    snprintf(out, len, "flock_you-%04d-%02d-%02d.json", year, month, day);
-  }
+  snprintf(out, len, "/flock_you-%04u.json", fySessionSeq);
 }
+
+// Forward declaration — defined below, used at boot by fyLoadDailySession
+static uint16_t fyFindNextBootCounter();
+
+// ============================================================
 // Confidence weights, OUI byte tables, and sequential-MAC tracking moved to
 // fy_confidence.h (included further below, after AlertType/isFcnSsid are
 // defined — see the "CONFIDENCE SCORE COMPUTATION" section).
-
-// ============================================================
 // ALERT QUEUE  (callback → loop, avoids Serial in WiFi task)
 // ============================================================
 //
@@ -1099,12 +1081,17 @@ static void dualPrintln(const char *str)
 #endif
 }
 
-// Load existing daily file at boot so detections persist across power cycles
+// Load existing session at boot so detections persist across power cycles
 static void fyLoadDailySession()
 {
-  if (!fySpiffsReady) return;
+  if (!gStorageReady) return;
+  // fyFindNextBootCounter() scans existing files and returns maxSeq+1.
+  // We want to load the latest file (maxSeq), then set fySessionSeq to
+  // maxSeq+1 so the next save creates a new file.
+  fySessionSeq = fyFindNextBootCounter() - 1;  // fySessionSeq = maxSeq (latest file)
+  if (fySessionSeq == 0) return;  // no existing files
   char dailyPath[32];
-  fyDailySessionPath(dailyPath, sizeof(dailyPath));
+  fySessionPath(dailyPath, sizeof(dailyPath));  // /flock_you-NNNN.json
   if (!fyExists(dailyPath)) return;
   File f = fyOpen(dailyPath, "r");
   if (!f) return;
@@ -1814,7 +1801,6 @@ static bool fyAtomicPromote(const char *src, const char *dst)
 static uint16_t fyFindNextBootCounter()
 {
   uint16_t maxSeq = 0;
-#if defined(USE_M5BASIC) && defined(USE_SDCARD)
   if (gStorageChoice == StorageChoice::Sd && gStorageReady)
   {
     File root = SD.open("/");
@@ -1828,8 +1814,8 @@ static uint16_t fyFindNextBootCounter()
           String name = f.name();
           if (name.startsWith("flock_you-") && name.endsWith(".json"))
           {
-            uint32_t seq = 0;
-            int year=0,month=0,day=0; sscanf(name.c_str(), "flock_you-%4u-%2u-%2u.json", &year,&month,&day); if (year>0 && month>0 && day>0) { seq = year*10000UL + month*100UL + day; }
+            uint16_t seq = 0;
+            sscanf(name.c_str(), "flock_you-%4u.json", &seq);
             if (seq > maxSeq) maxSeq = seq;
           }
         }
@@ -1837,23 +1823,22 @@ static uint16_t fyFindNextBootCounter()
       }
     }
   }
-#endif
   if (gStorageChoice == StorageChoice::Spiffs && fySpiffsReady)
   {
-    fs::File f = SPIFFS.open("/");
-    if (f)
+    fs::File root = SPIFFS.open("/");
+    if (root)
     {
-      fs::File entry = f.openNextFile();
+      fs::File entry = root.openNextFile();
       while (entry)
       {
         String name = entry.name();
         if (name.startsWith("flock_you-") && name.endsWith(".json"))
         {
-          uint32_t seq = 0;
-          int year2=0,month2=0,day2=0; sscanf(name.c_str(), "flock_you-%4u-%2u-%2u.json", &year2,&month2,&day2); if (year2>0 && month2>0 && day2>0) { seq = year2*10000UL + month2*100UL + day2; }
+          uint16_t seq = 0;
+          sscanf(name.c_str(), "flock_you-%4u.json", &seq);
           if (seq > maxSeq) maxSeq = seq;
         }
-        entry = f.openNextFile();
+        entry = root.openNextFile();
       }
     }
   }
@@ -1866,13 +1851,15 @@ void fySaveSession()
     return;
   if (!fyDirty && fyDetCount == fyLastSaveCount)
     return;
+  // Bump the sequence number so each save creates a new file.
+  fySessionSeq++;
   size_t payloadBytes = 0;
   uint32_t crc = fyComputePayloadCRC(payloadBytes);
   int savedCount = fyDetCount;
   char dailyPath[32];
-  fyDailySessionPath(dailyPath, sizeof(dailyPath));
+  fySessionPath(dailyPath, sizeof(dailyPath));
   char tmpPath[64];
-  snprintf(tmpPath, sizeof(tmpPath), "/%s.tmp", dailyPath);
+  snprintf(tmpPath, sizeof(tmpPath), "%s.tmp", dailyPath);
   File f = fyOpen(tmpPath, "w");
   if (!f)
   {
@@ -2599,27 +2586,6 @@ void setup() {
 #if defined(USE_M5BASIC)
   m5basicInit();
 
-  // Hardware auto-detection for optional GPS + LoRa modules
-  gHasGPS = detect_gps(Wire, 21, 22);
-  gHasLoRa = detect_lora(5, 26, 2);
-  if (gHasGPS) {
-    dualPrintln("[flockyou] GPS module detected on I2C (0x10/0x42)");
-    gpsInit(Wire, 21, 22);
-  }
-  if (gHasLoRa) dualPrintln("[flockyou] LoRa module (SX127x) detected on SPI");
-  gHasCC1101 = detect_cc1101(SPI, 4);
-  if (gHasCC1101) {
-    dualPrintln("[flockyou] CC1101 sub-GHz detected (315/433/868/915 MHz)");
-    cc1101Init(SPI, 4);
-  }
-  dualPrintln("[flockyou] Btn C short=det list, long=web server toggle");
-  if (gHasCC1101) {
-    cc1101Init(SPI, 5);
-    dualPrintln("[flockyou] CC1101 sub-GHz module detected");
-  }
-#endif
-
-#if defined(USE_M5BASIC)
   // Storage selection MUST happen before the scanning screen is drawn,
   // otherwise the user sees the scanning UI flash first.
   StorageResult st = storageBootMenu();
@@ -2661,13 +2627,38 @@ void setup() {
   }
   esp_log_level_set("SPIFFS", ESP_LOG_WARN);
 
+  // Hardware auto-detection for optional GPS + LoRa + CC1101 modules.
+  // MUST come AFTER storage selection: detect_cc1101(SPI, 4) grabs GPIO4
+  // which is the same pin as the SD card CS on M5Stack Basic. If CC1101
+  // detection runs first, it will claim GPIO4 and prevent SD.begin(4) from
+  // working. So we detect CC1101 only when the SD card is NOT present.
+  gHasGPS = detect_gps(Wire, 21, 22);
+  gHasLoRa = detect_lora(5, 26, 2);
+  if (gHasGPS) {
+    dualPrintln("[flockyou] GPS module detected on I2C (0x10/0x42)");
+    gpsInit(Wire, 21, 22);
+  }
+  if (gHasLoRa) dualPrintln("[flockyou] LoRa module (SX127x) detected on SPI");
+
+  // Detect CC1101 only when SD card slot is NOT in use (GPIO4 conflict).
+  // The storage boot menu's sdPresent() already ran SD.begin(4) if a card
+  // was present — if it failed, GPIO4 is free for CC1101.
+  gHasCC1101 = false;
+  if (!gStorageReady || gStorageChoice != StorageChoice::Sd)
+  {
+    gHasCC1101 = detect_cc1101(SPI, 4);
+    if (gHasCC1101) {
+      dualPrintln("[flockyou] CC1101 sub-GHz detected (315/433/868/915 MHz)");
+      cc1101Init(SPI, 4);
+    }
+  }
+  dualPrintln("[flockyou] Btn C short=det list, long=web server toggle");
+
   m5basicScanning(currentChannel, channelModeName(), 0,
                   millis(), false,
                   (int)FY_OUI_HIGH_COUNT, (int)FY_OUI_MFR_COUNT);
-#endif
 
   // SD card raw file storage for M5Launcher data retrieval
-#if defined(USE_M5BASIC)
   if (gStorageChoice == StorageChoice::Sd && gStorageReady) {
     if (sdInit()) {
       dualPrintln("[flockyou] SD raw file storage ready");

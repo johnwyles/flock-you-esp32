@@ -196,7 +196,7 @@ static uint8_t uiTakeButtonAction() {
 }
 static void uiSetButtonAction(uint8_t a) {
     portENTER_CRITICAL(&g_uiBtnMux);
-    if (g_uiButtonAction == 0) g_uiButtonAction = a;
+    g_uiButtonAction = a;
     portEXIT_CRITICAL(&g_uiBtnMux);
 }
 

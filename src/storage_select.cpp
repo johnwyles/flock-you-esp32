@@ -99,18 +99,15 @@ void notify(const char *msg)
 
 static bool sdPresent()
 {
-  // M5Stack Basic has an SD card slot with a mechanical detect switch.
-  // When no card is inserted, the CD pin is pulled to a known state.
-  // On M5Stack Basic, SD card detect is on GPIO2 (CD pin is LOW when card present).
-  pinMode(2, INPUT_PULLUP);
-  delay(1);  // let pin settle
-  bool cardPresent = (digitalRead(2) == LOW);
-  
-  if (!cardPresent) {
-    return false;  // No SD card — use SPIFFS
-  }
-  
-  // SD card physically present — initialize it
+  // On M5Stack Basic, the SD card connects via SPI:
+  //   CLK → GPIO14 (SPI_CLK)   — NOT GPIO2
+  //   MISO → GPIO19            — NOT GPIO2
+  //   MOSI → GPIO23            — NOT GPIO2
+  //   CS → GPIO4
+  // There is NO dedicated card-detect pin on M5Stack Basic — GPIO2 is
+  // part of the SPI bus (or I2S on some variants), NOT a detect switch.
+  // The old code checking GPIO2 as card-detect was reading the CLK line
+  // and incorrectly reporting "no card" when the pin was HIGH.
   SPI.begin();
   return SD.begin(SD_CS_PIN, SPI, 25000000);
 }
