@@ -692,18 +692,44 @@ extern bool gWebServerMode;
 
 static int m5basicButtonTick() {
     M5.update();
-    if (M5.BtnA.wasPressed()) return 1;
-    if (M5.BtnB.wasPressed()) {
-        waypointRecordManual("manual");
-        return 2;
-    }
-    if (M5.BtnC.wasHold()) {
-        return 4;  // Btn C long press = toggle web server
-    }
-    if (M5.BtnC.wasPressed()) {
-        mb_needsRedraw = true;
-        mb_inAlert     = false;
-        return 3;
+    // Manual button detection using isPressed() for reliability —
+    // M5Unified's wasPressed()/wasHold() edge detection sometimes fails
+    // to fire in a FreeRTOS task context on M5Stack Basic.
+    static bool btnALatched = false, btnBLatched = false, btnCLatched = false;
+    static unsigned long btnCHoldStart = 0;
+
+    // Btn A — short press = save session
+    if (M5.BtnA.isPressed()) {
+        if (!btnALatched) { btnALatched = true; return 1; }
+    } else { btnALatched = false; }
+
+    // Btn B — short press = record waypoint + brightness cycle
+    if (M5.BtnB.isPressed()) {
+        if (!btnBLatched) {
+            btnBLatched = true;
+            waypointRecordManual("manual");
+            return 2;
+        }
+    } else { btnBLatched = false; }
+
+    // Btn C — short press = detection list, long press (>=500ms) = web toggle
+    if (M5.BtnC.isPressed()) {
+        if (btnCHoldStart == 0) btnCHoldStart = millis();
+        if (!btnCLatched) btnCLatched = true;
+        if (millis() - btnCHoldStart >= 500) {
+            btnCHoldStart = 0;
+            btnCLatched = false;
+            return 4;  // long press = toggle web server
+        }
+    } else {
+        if (btnCLatched) {
+            btnCLatched = false;
+            btnCHoldStart = 0;
+            mb_needsRedraw = true;
+            mb_inAlert = false;
+            return 3;  // short press = det list
+        }
+        btnCHoldStart = 0;
     }
     return 0;
 }
