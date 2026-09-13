@@ -3,6 +3,7 @@
 
 #include "fy_webserver.h"
 #include "fy_webserver_config.h"
+#include <WiFi.h>
 #include "esp_wifi.h"
 #include "fy_globals.h"
 
@@ -15,6 +16,7 @@ extern const char *mb_wifiStatus;
 // ── Globals from main.cpp (now a separate TU) ─────────────────────────────────
 extern bool fySpiffsReady;
 extern int fyDetCount;
+extern bool gStorageReady;
 
 static bool gWebServerActive = false;
 static IPAddress gApIP(192, 168, 4, 1);
@@ -33,28 +35,19 @@ void fyWebServerStart() {
   esp_wifi_set_promiscuous(false);
   delay(100);
 
-  // Use ESP-IDF API directly for clean WiFi restart — the Arduino WiFi
-  // library was not used for initial WiFi setup (setup uses esp_wifi_init/start)
+  // Full WiFi driver restart for clean state transition from
+  // promiscuous/scanning mode to AP mode.
   esp_wifi_stop();
-  delay(100);
-  esp_wifi_set_mode(WIFI_MODE_AP);
-  delay(100);
-  esp_wifi_start();
   delay(200);
 
-  // Configure softAP with SSID, password, and channel
-  wifi_config_t apConfig = {};
-  memset(&apConfig, 0, sizeof(apConfig));
-  strcpy((char*)apConfig.ap.ssid, ssid);
-  strcpy((char*)apConfig.ap.password, pass);
-  apConfig.ap.ssid_len = strlen(ssid);
-  apConfig.ap.max_connection = 4;
-  apConfig.ap.authmode = strlen(pass) >= 8 ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
-  apConfig.ap.channel = 6;
-  esp_wifi_set_config(WIFI_IF_AP, &apConfig);
-
-  // Configure IP/AP settings and start DHCP
-  WiFi.softAPConfig(FY_WS_IP, FY_WS_IP, FY_WS_SUBNET);
+  // Use Arduino WiFi.softAP() which handles netif creation, DHCP,
+  // and IP assignment in one call. We need this because the initial
+  // WiFi setup used ESP-IDF APIs (esp_wifi_init/start with MODE_NULL),
+  // so the Arduino AP netif was never created. WiFi.softAP() creates
+  // it and configures everything correctly.
+  uint8_t channel = 6;
+  WiFi.softAP(ssid, pass, channel, false, 4, false);
+  WiFi.softAPConfig(FY_WS_IP, FY_WS_GATEWAY, FY_WS_SUBNET);
 
   mb_wifiStatus = "connecting...";
   snprintf(mb_webLog, sizeof(mb_webLog), "AP: %s", ssid);
@@ -71,8 +64,7 @@ void fyWebServerStart() {
     String html = "<html><body><h1>flock-you files</h1><ul>";
     bool found = false;
     // List files from SD card if present
-#if defined(USE_M5BASIC) && defined(USE_SDCARD)
-    if (gStorageReady || gSdRawReady) {
+    if (gStorageReady) {
       File root = SD.open("/");
       if (root) {
         String names[32];
@@ -103,7 +95,6 @@ void fyWebServerStart() {
         }
       }
     }
-#endif
     // List files from SPIFFS if available
     if (fySpiffsReady) {
       fs::File root = SPIFFS.open("/");
@@ -146,7 +137,6 @@ void fyWebServerStart() {
     mb_webLogMs = millis();
 
     // Try SD card first
-#if defined(USE_M5BASIC) && defined(USE_SDCARD)
     {
       String sdPath = name;
       if (!sdPath.startsWith("/")) sdPath = String("/") + sdPath;
@@ -158,7 +148,6 @@ void fyWebServerStart() {
         return;
       }
     }
-#endif
     // Fall back to SPIFFS
     if (fySpiffsReady) {
       File f = SPIFFS.open(name.c_str(), "r");
@@ -191,13 +180,11 @@ void fyWebServerStop() {
   if (!gWebServerActive) return;
   gWebServer.stop();
   WiFi.softAPdisconnect(true);
+  delay(100);
 
   // Stop WiFi and restart in null mode for promiscuous scanning
-  esp_wifi_stop();
-  delay(100);
-  esp_wifi_set_mode(WIFI_MODE_NULL);
-  esp_wifi_start();
-  delay(100);
+  WiFi.mode(WIFI_MODE_NULL);
+  delay(200);
 
   // Restore promiscuous mode + channel
   applyInitialChannel();
