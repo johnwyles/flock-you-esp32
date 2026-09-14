@@ -45,6 +45,10 @@ void fyWebServerStart() {
   esp_wifi_stop();
   delay(100);
 
+  // Set WiFi to station mode explicitly (not promiscuous/scanner mode)
+  WiFi.mode(WIFI_MODE_STA);
+  delay(50);
+
   // Connect as a station to the target WiFi network
   WiFi.begin(ssid, pass);
   delay(100);
@@ -199,16 +203,37 @@ void fyWebServerStart() {
       if (!sdPath.startsWith("/")) sdPath = String("/") + sdPath;
       File f = SD.open(sdPath.c_str(), "r");
       if (f) {
-        size_t sz = f.size();
+        // Use streamFile for proper HTTP response
+        gWebServer.streamFile(f, "application/json");
+        f.close();
+        return;
+      }
+    }
+    // Fall back to SPIFFS
+    if (fySpiffsReady) {
+      File f = SPIFFS.open(name.c_str(), "r");
+      if (f) {
+        gWebServer.streamFile(f, "application/json");
+        f.close();
+        return;
+      }
+    }
+    gWebServer.send(404, "application/json", "{\"error\":\"not found\"}");
+  });
+
+  // API endpoint for JavaScript fetch (returns raw JSON without download headers)
+  gWebServer.on("/api/file", []() {
+    String name = gWebServer.arg("name");
+
+    // Try SD card first
+    {
+      String sdPath = name;
+      if (!sdPath.startsWith("/")) sdPath = String("/") + sdPath;
+      File f = SD.open(sdPath.c_str(), "r");
+      if (f) {
         String body = f.readString();
         f.close();
-        // Set Content-Disposition so browser downloads it as a file
-        gWebServer.sendContent("HTTP/1.1 200 OK\r\n");
-        gWebServer.sendContent("Content-Type: application/json\r\n");
-        gWebServer.sendContent(String("Content-Disposition: attachment; filename=\"" + name + "\"\r\n").c_str());
-        gWebServer.sendContent(String("Content-Length: " + String(body.length()) + "\r\n").c_str());
-        gWebServer.sendContent("Connection: close\r\n\r\n");
-        gWebServer.sendContent(body.c_str());
+        gWebServer.send(200, "application/json", body);
         return;
       }
     }
@@ -218,12 +243,7 @@ void fyWebServerStart() {
       if (f) {
         String body = f.readString();
         f.close();
-        gWebServer.sendContent("HTTP/1.1 200 OK\r\n");
-        gWebServer.sendContent("Content-Type: application/json\r\n");
-        gWebServer.sendContent(String("Content-Disposition: attachment; filename=\"" + name + "\"\r\n").c_str());
-        gWebServer.sendContent(String("Content-Length: " + String(body.length()) + "\r\n").c_str());
-        gWebServer.sendContent("Connection: close\r\n\r\n");
-        gWebServer.sendContent(body.c_str());
+        gWebServer.send(200, "application/json", body);
         return;
       }
     }
@@ -243,7 +263,7 @@ void fyWebServerStart() {
     html += "<div class='status-bar' id='status'>Loading...</div>";
     html += "<script>";
     // Fetch the JSON file (served by /file handler) and build a table
-    html += "fetch('/file?name=" + name + "').then(r=>r.text()).then(raw=>{";
+    html += "fetch('/api/file?name=" + name + "').then(r=>r.text()).then(raw=>{";
     html += "  // Skip the header line (JSON metadata), parse remaining lines as JSON";
     html += "  let lines = raw.trim().split('\\n');";
     html += "  let header = lines[0];";
@@ -253,12 +273,14 @@ void fyWebServerStart() {
     html += "  }";
     html += "  let data = lines.map(l => {try{return JSON.parse(l)}catch(e){return null}}).filter(x=>x)";
     html += "  if(data.length === 0) {";
-    html += "    document.getElementById('table-container').innerHTML = '<p>No data found.</p>';";
+    html += "    document.getElementById('table-container').innerHTML = '<p>No data found.</p>'";
+    html += "    document.getElementById('status').innerText = 'No data found'";
     html += "    return;";
     html += "  }";
     // Collect all column names from all rows
-    html += "  let cols = [];";
+    html += "  let cols = []";
     html += "  data.forEach(row => {Object.keys(row).forEach(k => {if(cols.indexOf(k)===-1) cols.push(k)})})";
+    html += "  document.getElementById('status').innerText = data.length + ' rows, ' + cols.length + ' columns'";
     html += "  let t = '<table><thead><tr>'";
     html += "  cols.forEach(c => {t += '<th>'+c+'</th>'})";
     html += "  t += '</tr></thead><tbody>'";
@@ -277,6 +299,7 @@ void fyWebServerStart() {
     html += "  document.getElementById('table-container').innerHTML = t";
     html += "}).catch(e=>{";
     html += "  document.getElementById('table-container').innerHTML = '<p>Error loading data.</p>'";
+    html += "  document.getElementById('status').innerText = 'Error: ' + e.message";
     html += "})";
     html += "</script>";
     html += "</div></div></body></html>";
