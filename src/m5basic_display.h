@@ -697,7 +697,7 @@ static int m5basicButtonTick() {
     // to fire in a FreeRTOS task context on M5Stack Basic.
     static bool btnALatched = false, btnBLatched = false, btnCLatched = false;
     static unsigned long btnCHoldStart = 0;
-    static bool btnCLongConsumed = false;  // block short-press right after a long-press
+    static bool btnCLongConsumed = false;  // fire long-press only once per hold
 
     // Btn A — short press = save session
     if (M5.BtnA.isPressed()) {
@@ -717,28 +717,26 @@ static int m5basicButtonTick() {
     if (M5.BtnC.isPressed()) {
         if (btnCHoldStart == 0) btnCHoldStart = millis();
         if (!btnCLatched) btnCLatched = true;
-        if (millis() - btnCHoldStart >= 500) {
-            btnCHoldStart = 0;
-            btnCLatched = false;
-            btnCLongConsumed = true;  // suppress short-press on release
+        if (millis() - btnCHoldStart >= 500 && !btnCLongConsumed) {
+            btnCLongConsumed = true;  // fire once per press
             return 4;  // long press = toggle web server
         }
     } else {
-        if (btnCLongConsumed) {
-            // Button was long-pressed; just wait for full release
-            btnCLongConsumed = false;
-            btnCHoldStart = 0;
-            return 0;  // no action on release after long press
-        }
-        if (btnCLatched) {
-            btnCLatched = false;
-            btnCLongConsumed = false;
-            btnCHoldStart = 0;
+        // Button released — re-arm for next press
+        bool wasLongPress = btnCLongConsumed;
+        btnCHoldStart = 0;
+        btnCLatched = false;
+        btnCLongConsumed = false;
+        if (wasLongPress) {
+            // Released after long press — don't generate short-press
             mb_needsRedraw = true;
             mb_inAlert = false;
-            return 3;  // short press = det list
+            return 0;
         }
-        btnCHoldStart = 0;
+        // Normal short press
+        mb_needsRedraw = true;
+        mb_inAlert = false;
+        return 3;  // short press = det list / web exit
     }
     return 0;
 }
