@@ -722,21 +722,25 @@ static int m5basicButtonTick() {
             return 4;  // long press = toggle web server
         }
     } else {
-        // Button released — re-arm for next press
+        // Button released — check if it was a real short press
+        bool wasLatched = btnCLatched;
         bool wasLongPress = btnCLongConsumed;
         btnCHoldStart = 0;
         btnCLatched = false;
         btnCLongConsumed = false;
         if (wasLongPress) {
-            // Released after long press — don't generate short-press
+            // Released after long press — consume silently
             mb_needsRedraw = true;
             mb_inAlert = false;
             return 0;
         }
-        // Normal short press
-        mb_needsRedraw = true;
-        mb_inAlert = false;
-        return 3;  // short press = det list / web exit
+        if (wasLatched) {
+            // Was held < 500ms and released — short press
+            mb_needsRedraw = true;
+            mb_inAlert = false;
+            return 3;  // short press = det list / web exit
+        }
+        return 0;  // button not pressed, nothing to do
     }
     return 0;
 }
