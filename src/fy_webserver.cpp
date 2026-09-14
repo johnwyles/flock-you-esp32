@@ -36,7 +36,8 @@ void fyWebServerStart() {
   char pass[64] = {0};
   fyWsReadConfig(ssid, sizeof(ssid), pass, sizeof(pass));
 
-  // Stop promiscuous mode before switching to AP mode
+  // Switch from promiscuous AP-scanning mode to station mode to connect
+  // to an existing WiFi network (credentials from .env / build_flags).
   esp_wifi_set_promiscuous(false);
   delay(100);
 
@@ -44,42 +45,42 @@ void fyWebServerStart() {
   esp_wifi_stop();
   delay(100);
 
-  // Use ESP-IDF API directly for clean WiFi restart — same pattern as
-  // setup() which uses esp_wifi_init/start (not Arduino WiFi API)
-  esp_wifi_set_mode(WIFI_MODE_AP);
-  delay(50);
-  esp_wifi_start();
-  delay(200);
+  // Connect as a station to the target WiFi network
+  WiFi.begin(ssid, pass);
+  delay(100);
 
-  // Configure softAP with SSID, password, channel, max connections
-  wifi_config_t apConfig = {};
-  memset(&apConfig, 0, sizeof(apConfig));
-  strcpy((char*)apConfig.ap.ssid, ssid);
-  strcpy((char*)apConfig.ap.password, pass);
-  apConfig.ap.ssid_len = strlen(ssid);
-  apConfig.ap.max_connection = 4;
-  apConfig.ap.authmode = strlen(pass) >= 8 ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
-  apConfig.ap.channel = 6;
-  esp_wifi_set_config(WIFI_IF_AP, &apConfig);
+  // Wait for connection + DHCP lease (up to 15 seconds)
+  Serial.printf("[webserver] Connecting to %s...\n", ssid);
+  unsigned long startMs = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - startMs < 15000) {
+    delay(500);
+    Serial.printf("[webserver] connecting... %lus\n", (millis() - startMs) / 1000);
+  }
 
-  // Configure AP IP and DHCP
-  WiFi.softAPConfig(FY_WS_IP, FY_WS_GATEWAY, FY_WS_SUBNET);
-  delay(50);
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[webserver] WiFi connect failed, aborting");
+    mb_wifiStatus = "connect failed";
+    // Restore promiscuous scanning
+    esp_wifi_set_promiscuous(true);
+    return;
+  }
+
+  // WiFi connected — get DHCP-assigned IP
+  IPAddress ip = WiFi.localIP();
+  Serial.printf("[webserver] Connected! IP: %s\n", ip.toString().c_str());
 
   mb_wifiStatus = "connected";
-  snprintf(mb_webLog, sizeof(mb_webLog), "SSID: %s\r\nPASS: %s\r\nIP: %s", ssid, pass, FY_WS_IP.toString().c_str());
+  snprintf(mb_webLog, sizeof(mb_webLog), "SSID: %s\r\nPASS: %s\r\nIP: %s", ssid, pass, ip.toString().c_str());
 
   // Populate public AP info for display
   strncpy(gWebServerSSID, ssid, sizeof(gWebServerSSID) - 1);
   gWebServerSSID[sizeof(gWebServerSSID) - 1] = '\0';
   strncpy(gWebServerPass, pass, sizeof(gWebServerPass) - 1);
   gWebServerPass[sizeof(gWebServerPass) - 1] = '\0';
-  snprintf(gWebServerIP, sizeof(gWebServerIP), "%s", FY_WS_IP.toString().c_str());
+  snprintf(gWebServerIP, sizeof(gWebServerIP), "%s", ip.toString().c_str());
   mb_showWebLog = true;
   mb_webLogMs = millis();
-  Serial.printf("[webserver] SSID=%s PASS=%s IP=%s\n", ssid, pass, FY_WS_IP.toString().c_str());
-
-  Serial.printf("[webserver] AP started: %s / %s @ %s\n", gApSSID, gApPass, gApIP.toString().c_str());
+  Serial.printf("[webserver] Connected to %s, web server on %s:80\n", ssid, ip.toString().c_str());
 
   // List all available files ordered by date
   gWebServer.on("/files", []() {
