@@ -2926,10 +2926,17 @@ void loop()
     }
     else if (btn == 3)
     {
-      // Btn C short: show detection list (clear alert display, force redraw)
-      mb_needsRedraw = true;
-      mb_inAlert = false;
-      Serial.println("[flockyou] Det list (button)");
+      // Btn C short: when in web server mode, short press exits web server
+      if (gWebServerMode) {
+        fyWebServerStop();
+        gWebServerMode = false;
+        Serial.println("[flockyou] Web server: OFF");
+      } else {
+        // Normal: show detection list (clear alert display, force redraw)
+        mb_needsRedraw = true;
+        mb_inAlert = false;
+        Serial.println("[flockyou] Det list (button)");
+      }
     }
     else if (btn == 4)
     {
