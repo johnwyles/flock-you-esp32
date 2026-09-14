@@ -48,6 +48,10 @@ void fyWebServerStart() {
   // Set WiFi to station mode explicitly (not promiscuous/scanner mode)
   WiFi.mode(WIFI_MODE_STA);
   delay(50);
+  // Start the WiFi driver (WiFi.mode doesn't start it, begin does, but
+  // after esp_wifi_stop() we need to ensure the driver is fresh)
+  esp_wifi_start();
+  delay(100);
 
   // Connect as a station to the target WiFi network
   WiFi.begin(ssid, pass);
