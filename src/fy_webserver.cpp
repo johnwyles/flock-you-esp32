@@ -189,6 +189,7 @@ void fyWebServerStart() {
   gWebServer.begin();
   gWebServerActive = true;
   mb_wifiStatus = "connected";
+  Serial.println("[webserver] HTTP server on port 80 ready");
 }
 
 void fyWebServerStop() {
@@ -216,6 +217,11 @@ void fyWebServerStop() {
 void fyWebServerTick() {
   if (gWebServerActive) {
     gWebServer.handleClient();
+    static unsigned long lastLog = 0;
+    if (millis() - lastLog > 5000) {
+      lastLog = millis();
+      Serial.println("[webserver] handleClient running");
+    }
   }
 }
 
