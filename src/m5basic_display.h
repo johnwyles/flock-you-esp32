@@ -697,6 +697,7 @@ static int m5basicButtonTick() {
     // to fire in a FreeRTOS task context on M5Stack Basic.
     static bool btnALatched = false, btnBLatched = false, btnCLatched = false;
     static unsigned long btnCHoldStart = 0;
+    static bool btnCLongConsumed = false;  // block short-press right after a long-press
 
     // Btn A — short press = save session
     if (M5.BtnA.isPressed()) {
@@ -712,18 +713,26 @@ static int m5basicButtonTick() {
         }
     } else { btnBLatched = false; }
 
-    // Btn C — short press = detection list, long press (>=500ms) = web toggle
+    // Btn C — short press = det list / web exit, long press (>=500ms) = web toggle
     if (M5.BtnC.isPressed()) {
         if (btnCHoldStart == 0) btnCHoldStart = millis();
         if (!btnCLatched) btnCLatched = true;
         if (millis() - btnCHoldStart >= 500) {
             btnCHoldStart = 0;
             btnCLatched = false;
+            btnCLongConsumed = true;  // suppress short-press on release
             return 4;  // long press = toggle web server
         }
     } else {
+        if (btnCLongConsumed) {
+            // Button was long-pressed; just wait for full release
+            btnCLongConsumed = false;
+            btnCHoldStart = 0;
+            return 0;  // no action on release after long press
+        }
         if (btnCLatched) {
             btnCLatched = false;
+            btnCLongConsumed = false;
             btnCHoldStart = 0;
             mb_needsRedraw = true;
             mb_inAlert = false;
