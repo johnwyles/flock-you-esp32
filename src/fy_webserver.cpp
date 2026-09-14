@@ -33,34 +33,24 @@ void fyWebServerStart() {
 
   // Stop promiscuous mode before switching to AP mode
   esp_wifi_set_promiscuous(false);
-  delay(100);
+  delay(10);
 
-  // Full WiFi driver restart for clean state transition from
-  // promiscuous/scanning mode to AP mode.
-  // Use Arduino WiFi.softAP() which handles netif creation, DHCP,
-  // and IP assignment in one call. We must fully re-initialize WiFi
-  // because the initial setup used ESP-IDF APIs without the Arduino
-  // TCP/IP stack. 
+  // Stop WiFi driver completely
   esp_wifi_stop();
-  delay(200);
 
-  // Force Arduino WiFi low-level re-initialization by toggling mode.
-  // WiFi.mode() -> if current mode == requested mode, return true (no init).
-  // We need to trick it into calling wifiLowLevelInit() by setting
-  // mode to NULL first, then back to AP in softAP().
-  // But wifiLowLevelInit checks lowLevelInitDone flag...
-  // Instead, just use WiFi.softAP() which calls mode() internally.
-  // The key: after esp_wifi_stop(), WiFi is in STOPPED state.
-  // WiFi.softAP() will call wifiLowLevelInit() if lowLevelInitDone==false,
-  // or just esp_wifi_set_mode + esp_wifi_start if already init'd.
-  uint8_t channel = 6;
-  WiFi.softAP(ssid, pass, channel, false, 4, false);
-  WiFi.softAPConfig(FY_WS_IP, FY_WS_GATEWAY, FY_WS_SUBNET);
-  // WiFi.softAP() sets mode + config but does NOT call esp_wifi_start()
-  // when WiFi was previously started via ESP-IDF APIs in setup().
-  // Must explicitly start WiFi for the AP to broadcast.
+  // IMPORTANT: WiFi.softAP() calls WiFi.mode() which calls esp_wifi_set_mode()
+  // internally. This creates the AP netif and initializes TCP/IP stack.
+  // We must call it BEFORE esp_wifi_start() so the netif exists.
+  // The 'listen_interval' parameter set to 0 disables DTIM.
+  WiFi.softAP(ssid, pass, 6, false, 4, false);
+
+  // Now start WiFi in AP mode
   esp_wifi_start();
   delay(200);
+
+  // Configure AP IP and DHCP
+  WiFi.softAPConfig(FY_WS_IP, FY_WS_GATEWAY, FY_WS_SUBNET);
+  delay(50);
 
   mb_wifiStatus = "connecting...";
   snprintf(mb_webLog, sizeof(mb_webLog), "AP: %s", ssid);
@@ -192,12 +182,14 @@ void fyWebServerStart() {
 void fyWebServerStop() {
   if (!gWebServerActive) return;
   gWebServer.stop();
-  WiFi.softAPdisconnect(true);
-  delay(100);
 
-  // Stop WiFi and restart in null mode for promiscuous scanning
-  WiFi.mode(WIFI_MODE_NULL);
-  delay(200);
+  // Stop WiFi and restart in null mode for promiscuous scanning.
+  // Use the same ESP-IDF API sequence that setup() used originally.
+  esp_wifi_stop();
+  delay(100);
+  esp_wifi_set_mode(WIFI_MODE_NULL);
+  esp_wifi_start();
+  delay(100);
 
   // Restore promiscuous mode + channel
   applyInitialChannel();
@@ -205,6 +197,7 @@ void fyWebServerStop() {
 
   gWebServerActive = false;
   mb_wifiStatus = "disconnected";
+  mb_showWebLog = false;
   Serial.println("[webserver] stopped, resuming scanning");
 }
 
