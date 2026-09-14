@@ -123,19 +123,22 @@ void fyWebServerStart() {
     bool found = false;
     // List files from SD card if present
     if (gStorageReady) {
+      yield();
       File root = SD.open("/");
       if (root) {
+        yield();
         String names[32];
         int count = 0;
         File f = root.openNextFile();
         while (f && count < 32) {
           if (!f.isDirectory()) {
-            String name = f.name();
-            if (name.startsWith("flock_you-") || name.startsWith("waypoints-")) {
-              names[count++] = name;
+            String fname = f.name();
+            if (fname.startsWith("flock_you-") || fname.startsWith("waypoints-")) {
+              names[count++] = fname;
             }
           }
           f = root.openNextFile();
+          yield();  // prevent WiFi watchdog timeout
         }
         root.close();
         // Bubble sort by name
@@ -209,9 +212,9 @@ void fyWebServerStart() {
       if (!sdPath.startsWith("/")) sdPath = String("/") + sdPath;
       File f = SD.open(sdPath.c_str(), "r");
       if (f) {
-        String body = f.readString();
+        gWebServer.sendHeader("Content-Type", "application/json");
+        gWebServer.streamFile(f, "application/json");
         f.close();
-        gWebServer.send(200, "application/json", body);
         return;
       }
     }
@@ -219,9 +222,9 @@ void fyWebServerStart() {
     if (fySpiffsReady) {
       File f = SPIFFS.open(name.c_str(), "r");
       if (f) {
-        String body = f.readString();
+        gWebServer.sendHeader("Content-Type", "application/json");
+        gWebServer.streamFile(f, "application/json");
         f.close();
-        gWebServer.send(200, "application/json", body);
         return;
       }
     }
