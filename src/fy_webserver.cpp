@@ -278,7 +278,7 @@ void fyWebServerStart() {
 
     String html = "<html><head><title>Table: " + name + "</title>" + String(pageCSS) + "</head><body><div class='container'>";
     html += "<h1>Detections: " + name + "</h1>";
-    html += "<p><a class='btn btn-back' href='/files'>← Back to files</a></p>";
+    html += "<p><a class='btn btn-back' href='/files'>Back to files</a></p>";
 
     // Read the file
     String body = "";
@@ -303,71 +303,15 @@ void fyWebServerStart() {
     if (body.length() == 0) {
       html += "<div class='card'><p>File not found.</p></div>";
     } else {
-      // Parse JSON lines — first line may be metadata header {"v":1,"count":N,...}
-      // Skip it, then parse each subsequent line as a detection JSON object.
-      // Collect all unique column names, then generate the table.
-
-      // First pass: collect column names from all data lines
-      String cols = "";
+      // Simple approach: each line is a JSON object (skip metadata header)
+      // Use a single-pass parser that builds table rows as it finds keys
       int start = 0;
       int lineNum = 0;
-      while (start < body.length()) {
-        int nl = body.indexOf('\n', start);
-        if (nl == -1) nl = body.length();
-        String line = body.substring(start, nl);
-        line.trim();
-        start = nl + 1;
-        if (line.length() < 10) continue;
-        // Skip metadata header line
-        if (lineNum == 0 && line.charAt(0) == '{' && line.indexOf("\"v\":") != -1) {
-          lineNum++;
-          continue;
-        }
-        lineNum++;
-        // Extract top-level keys (strings before colon, not inside nested objects)
-        int depth = 0;
-        int pos = 0;
-        while (pos < line.length()) {
-          char c = line.charAt(pos);
-          if (c == '{') depth++;
-          else if (c == '}') depth--;
-          if (depth == 1 && c == '"') {
-            int q2 = line.indexOf('"', pos + 1);
-            if (q2 != -1) {
-              String key = line.substring(pos + 1, q2);
-              // Only top-level keys (not keys inside nested objects)
-              if (cols.indexOf("|" + key + "|") == -1) {
-                cols += key + "|";
-              }
-              pos = q2 + 1;
-              // Skip to the colon
-              int colonPos = line.indexOf(':', pos);
-              if (colonPos != -1) pos = colonPos + 1;
-              continue;
-            }
-          }
-          pos++;
-        }
-      }
-
-      // Generate table header
-      html += "<table><tr>";
-      int ci = 0;
-      while (ci < cols.length()) {
-        int pipe = cols.indexOf('|', ci);
-        if (pipe == -1) break;
-        String col = cols.substring(ci, pipe);
-        if (col.length() > 0) {
-          html += "<th>" + col + "</th>";
-        }
-        ci = pipe + 1;
-      }
-      html += "</tr>";
-
-      // Generate data rows
-      start = 0;
-      lineNum = 0;
       int dataRows = 0;
+      String firstLine = "";
+
+      // First pass: find columns from the first data line
+      bool colsFound = false;
       while (start < body.length()) {
         int nl = body.indexOf('\n', start);
         if (nl == -1) nl = body.length();
@@ -381,58 +325,102 @@ void fyWebServerStart() {
           continue;
         }
         lineNum++;
+        if (!colsFound) {
+          firstLine = line;
+          colsFound = true;
+        }
         dataRows++;
+        yield();  // prevent watchdog
+      }
+
+      // Extract column names from first data line
+      html += "<table>";
+      // Header row with column names
+      html += "<tr>";
+      int p = 0;
+      int depth = 0;
+      while (p < firstLine.length()) {
+        char c = firstLine.charAt(p);
+        if (c == '{') depth++;
+        else if (c == '}') depth--;
+        if (depth == 1 && c == '"') {
+          int q2 = firstLine.indexOf('"', p + 1);
+          if (q2 != -1) {
+            String key = firstLine.substring(p + 1, q2);
+            html += "<th>" + key + "</th>";
+            p = q2 + 1;
+            // Skip to colon
+            int colon = firstLine.indexOf(':', p);
+            if (colon != -1) p = colon + 1;
+            continue;
+          }
+        }
+        p++;
+      }
+      html += "</tr>";
+
+      // Second pass: generate rows
+      start = 0;
+      lineNum = 0;
+      while (start < body.length()) {
+        int nl = body.indexOf('\n', start);
+        if (nl == -1) nl = body.length();
+        String line = body.substring(start, nl);
+        line.trim();
+        start = nl + 1;
+        if (line.length() < 10) continue;
+        if (lineNum == 0 && line.charAt(0) == '{' && line.indexOf("\"v\":") != -1) {
+          lineNum++;
+          continue;
+        }
+        lineNum++;
 
         html += "<tr>";
-        // For each column, extract the value from this JSON line
-        ci = 0;
-        while (ci < cols.length()) {
-          int pipe = cols.indexOf('|', ci);
-          if (pipe == -1) break;
-          String col = cols.substring(ci, pipe);
-          ci = pipe + 1;
-          if (col.length() == 0) continue;
-
-          String val = "";
-          // Find "col": in the JSON line
-          String searchKey = "\"" + col + "\"";
-          int pos = line.indexOf(searchKey);
-          if (pos != -1) {
-            int colonPos = line.indexOf(':', pos + searchKey.length());
-            if (colonPos != -1) {
-              pos = colonPos + 1;
-              while (pos < line.length() && (line.charAt(pos) == ' ' || line.charAt(pos) == '\t')) pos++;
-              if (pos < line.length() && line.charAt(pos) == '"') {
-                // String value
-                int endQ = line.indexOf('"', pos + 1);
-                if (endQ != -1) {
-                  val = line.substring(pos + 1, endQ);
-                  val.replace("\\\"", "\"");
-                  val.replace("\\\\", "\\");
-                  val.replace("\\n", "\n");
+        // Re-extract columns from this line's first data line pattern
+        p = 0;
+        depth = 0;
+        while (p < line.length()) {
+          char c = line.charAt(p);
+          if (c == '{') depth++;
+          else if (c == '}') depth--;
+          if (depth == 1 && c == '"') {
+            int q2 = line.indexOf('"', p + 1);
+            if (q2 != -1) {
+              String key = line.substring(p + 1, q2);
+              // Skip to colon
+              int colon = line.indexOf(':', q2 + 1);
+              if (colon != -1) {
+                p = colon + 1;
+                while (p < line.length() && (line.charAt(p) == ' ' || line.charAt(p) == '\t')) p++;
+                String val = "";
+                if (p < line.length() && line.charAt(p) == '"') {
+                  int endQ = line.indexOf('"', p + 1);
+                  if (endQ != -1) {
+                    val = line.substring(p + 1, endQ);
+                    val.replace("\\\"", "\"");
+                    val.replace("\\\\", "\\");
+                  }
+                } else {
+                  int endVal = line.indexOf(',', p);
+                  if (endVal == -1) endVal = line.indexOf('}', p);
+                  if (endVal == -1) endVal = line.indexOf(']', p);
+                  if (endVal == -1) endVal = line.length();
+                  val = line.substring(p, endVal);
+                  val.trim();
                 }
-              } else {
-                // Numeric/boolean value or nested object/array
-                int endVal = line.indexOf(',', pos);
-                int endBrace = line.indexOf('}', pos);
-                int endBracket = line.indexOf(']', pos);
-                // Find the earliest terminator
-                int endVal2 = line.length();
-                if (endVal != -1) endVal2 = endVal;
-                if (endBrace != -1 && endBrace < endVal2) endVal2 = endBrace;
-                if (endBracket != -1 && endBracket < endVal2) endVal2 = endBracket;
-                val = line.substring(pos, endVal2);
-                val.trim();
+                val.replace("&", "&amp;");
+                val.replace("<", "&lt;");
+                val.replace(">", "&gt;");
+                html += "<td>" + val + "</td>";
+                p = q2 + 1;
+                continue;
               }
             }
           }
-          // HTML-escape
-          val.replace("&", "&amp;");
-          val.replace("<", "&lt;");
-          val.replace(">", "&gt;");
-          html += "<td>" + val + "</td>";
+          p++;
         }
         html += "</tr>";
+        yield();  // prevent watchdog
       }
       html += "</table></div>";
       html += "<div class='status-bar'>" + String(dataRows) + " rows loaded</div>";
