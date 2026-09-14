@@ -138,6 +138,7 @@ void fyWebServerStart() {
           f = root.openNextFile();
         }
         root.close();
+        // Bubble sort by name
         for (int i = 0; i < count; i++) {
           for (int j = i + 1; j < count; j++) {
             if (names[j] < names[i]) {
@@ -173,6 +174,7 @@ void fyWebServerStart() {
           f = root.openNextFile();
         }
         root.close();
+        // Bubble sort by name
         for (int i = 0; i < count; i++) {
           for (int j = i + 1; j < count; j++) {
             if (names[j] < names[i]) {
@@ -207,9 +209,9 @@ void fyWebServerStart() {
       if (!sdPath.startsWith("/")) sdPath = String("/") + sdPath;
       File f = SD.open(sdPath.c_str(), "r");
       if (f) {
-        // Use streamFile for proper HTTP response
-        gWebServer.streamFile(f, "application/json");
+        String body = f.readString();
         f.close();
+        gWebServer.send(200, "application/json", body);
         return;
       }
     }
@@ -217,18 +219,18 @@ void fyWebServerStart() {
     if (fySpiffsReady) {
       File f = SPIFFS.open(name.c_str(), "r");
       if (f) {
-        gWebServer.streamFile(f, "application/json");
+        String body = f.readString();
         f.close();
+        gWebServer.send(200, "application/json", body);
         return;
       }
     }
     gWebServer.send(404, "application/json", "{\"error\":\"not found\"}");
   });
 
-  // API endpoint for JavaScript fetch (returns raw JSON without download headers)
-  gWebServer.on("/api/file", []() {
+  // Serve raw JSON file — same as /file, kept for compatibility
+  gWebServer.on("/json", []() {
     String name = gWebServer.arg("name");
-
     // Try SD card first
     {
       String sdPath = name;
@@ -241,7 +243,6 @@ void fyWebServerStart() {
         return;
       }
     }
-    // Fall back to SPIFFS
     if (fySpiffsReady) {
       File f = SPIFFS.open(name.c_str(), "r");
       if (f) {
@@ -254,59 +255,174 @@ void fyWebServerStart() {
     gWebServer.send(404, "application/json", "{\"error\":\"not found\"}");
   });
 
-  // Table view — serves an HTML page with JavaScript that fetches the JSON
-  // and renders it as a table with dynamic headers
+  // Table view — parse JSON on server and render as HTML table
   gWebServer.on("/table", []() {
     String name = gWebServer.arg("name");
     snprintf(mb_webLog, sizeof(mb_webLog), "GET /table?name=%s from %s", name.c_str(), gWebServer.client().remoteIP().toString().c_str());
     mb_webLogMs = millis();
+
     String html = "<html><head><title>Table: " + name + "</title>" + String(pageCSS) + "</head><body><div class='container'>";
     html += "<h1>Detections: " + name + "</h1>";
     html += "<p><a class='btn btn-back' href='/files'>← Back to files</a></p>";
-    html += "<div class='card'><div id='table-container'></div></div>";
-    html += "<div class='status-bar' id='status'>Loading...</div>";
-    html += "<script>";
-    // Fetch the JSON file (served by /file handler) and build a table
-    html += "fetch('/api/file?name=" + name + "').then(r=>r.text()).then(raw=>{";
-    html += "  // Skip the header line (JSON metadata), parse remaining lines as JSON";
-    html += "  let lines = raw.trim().split('\\n');";
-    html += "  let header = lines[0];";
-    html += "  // If file has JSON header line starting with {, skip it";
-    html += "  if(lines.length > 1 && lines[0].startsWith('{')) {";
-    html += "    lines = lines.slice(1);";
-    html += "  }";
-    html += "  let data = lines.map(l => {try{return JSON.parse(l)}catch(e){return null}}).filter(x=>x)";
-    html += "  if(data.length === 0) {";
-    html += "    document.getElementById('table-container').innerHTML = '<p>No data found.</p>'";
-    html += "    document.getElementById('status').innerText = 'No data found'";
-    html += "    return;";
-    html += "  }";
-    // Collect all column names from all rows
-    html += "  let cols = []";
-    html += "  data.forEach(row => {Object.keys(row).forEach(k => {if(cols.indexOf(k)===-1) cols.push(k)})})";
-    html += "  document.getElementById('status').innerText = data.length + ' rows, ' + cols.length + ' columns'";
-    html += "  let t = '<table><thead><tr>'";
-    html += "  cols.forEach(c => {t += '<th>'+c+'</th>'})";
-    html += "  t += '</tr></thead><tbody>'";
-    html += "  data.forEach(row => {";
-    html += "    t += '<tr>'";
-    html += "    cols.forEach(c => {";
-    html += "      let v = row[c];";
-    html += "      if(v && typeof v === 'object') v = JSON.stringify(v)";
-    html += "      else if(v === null) v = ''";
-    html += "      else v = String(v)";
-    html += "      t += '<td>'+v.replace(/</g,'&lt;')+'</td>'";
-    html += "    })";
-    html += "    t += '</tr>'";
-    html += "  })";
-    html += "  t += '</tbody></table>'";
-    html += "  document.getElementById('table-container').innerHTML = t";
-    html += "}).catch(e=>{";
-    html += "  document.getElementById('table-container').innerHTML = '<p>Error loading data.</p>'";
-    html += "  document.getElementById('status').innerText = 'Error: ' + e.message";
-    html += "})";
-    html += "</script>";
-    html += "</div></div></body></html>";
+
+    // Read the file
+    String body = "";
+    {
+      String sdPath = name;
+      if (!sdPath.startsWith("/")) sdPath = String("/") + sdPath;
+      File f = SD.open(sdPath.c_str(), "r");
+      if (f) {
+        body = f.readString();
+        f.close();
+      }
+    }
+    if (body.length() == 0 && fySpiffsReady) {
+      File f = SPIFFS.open(name.c_str(), "r");
+      if (f) {
+        body = f.readString();
+        f.close();
+      }
+    }
+
+    if (body.length() == 0) {
+      html += "<div class='card'><p>File not found.</p></div>";
+    } else {
+      // Parse JSON lines — first line may be metadata header {"v":1,"count":N,...}
+      // Skip it, then parse each subsequent line as a detection JSON object.
+      // Collect all unique column names, then generate the table.
+
+      // First pass: collect column names from all data lines
+      String cols = "";
+      int start = 0;
+      int lineNum = 0;
+      while (start < body.length()) {
+        int nl = body.indexOf('\n', start);
+        if (nl == -1) nl = body.length();
+        String line = body.substring(start, nl);
+        line.trim();
+        start = nl + 1;
+        if (line.length() < 10) continue;
+        // Skip metadata header line
+        if (lineNum == 0 && line.charAt(0) == '{' && line.indexOf("\"v\":") != -1) {
+          lineNum++;
+          continue;
+        }
+        lineNum++;
+        // Extract top-level keys (strings before colon, not inside nested objects)
+        int depth = 0;
+        int pos = 0;
+        while (pos < line.length()) {
+          char c = line.charAt(pos);
+          if (c == '{') depth++;
+          else if (c == '}') depth--;
+          if (depth == 1 && c == '"') {
+            int q2 = line.indexOf('"', pos + 1);
+            if (q2 != -1) {
+              String key = line.substring(pos + 1, q2);
+              // Only top-level keys (not keys inside nested objects)
+              if (cols.indexOf("|" + key + "|") == -1) {
+                cols += key + "|";
+              }
+              pos = q2 + 1;
+              // Skip to the colon
+              int colonPos = line.indexOf(':', pos);
+              if (colonPos != -1) pos = colonPos + 1;
+              continue;
+            }
+          }
+          pos++;
+        }
+      }
+
+      // Generate table header
+      html += "<table><tr>";
+      int ci = 0;
+      while (ci < cols.length()) {
+        int pipe = cols.indexOf('|', ci);
+        if (pipe == -1) break;
+        String col = cols.substring(ci, pipe);
+        if (col.length() > 0) {
+          html += "<th>" + col + "</th>";
+        }
+        ci = pipe + 1;
+      }
+      html += "</tr>";
+
+      // Generate data rows
+      start = 0;
+      lineNum = 0;
+      int dataRows = 0;
+      while (start < body.length()) {
+        int nl = body.indexOf('\n', start);
+        if (nl == -1) nl = body.length();
+        String line = body.substring(start, nl);
+        line.trim();
+        start = nl + 1;
+        if (line.length() < 10) continue;
+        // Skip metadata header
+        if (lineNum == 0 && line.charAt(0) == '{' && line.indexOf("\"v\":") != -1) {
+          lineNum++;
+          continue;
+        }
+        lineNum++;
+        dataRows++;
+
+        html += "<tr>";
+        // For each column, extract the value from this JSON line
+        ci = 0;
+        while (ci < cols.length()) {
+          int pipe = cols.indexOf('|', ci);
+          if (pipe == -1) break;
+          String col = cols.substring(ci, pipe);
+          ci = pipe + 1;
+          if (col.length() == 0) continue;
+
+          String val = "";
+          // Find "col": in the JSON line
+          String searchKey = "\"" + col + "\"";
+          int pos = line.indexOf(searchKey);
+          if (pos != -1) {
+            int colonPos = line.indexOf(':', pos + searchKey.length());
+            if (colonPos != -1) {
+              pos = colonPos + 1;
+              while (pos < line.length() && (line.charAt(pos) == ' ' || line.charAt(pos) == '\t')) pos++;
+              if (pos < line.length() && line.charAt(pos) == '"') {
+                // String value
+                int endQ = line.indexOf('"', pos + 1);
+                if (endQ != -1) {
+                  val = line.substring(pos + 1, endQ);
+                  val.replace("\\\"", "\"");
+                  val.replace("\\\\", "\\");
+                  val.replace("\\n", "\n");
+                }
+              } else {
+                // Numeric/boolean value or nested object/array
+                int endVal = line.indexOf(',', pos);
+                int endBrace = line.indexOf('}', pos);
+                int endBracket = line.indexOf(']', pos);
+                // Find the earliest terminator
+                int endVal2 = line.length();
+                if (endVal != -1) endVal2 = endVal;
+                if (endBrace != -1 && endBrace < endVal2) endVal2 = endBrace;
+                if (endBracket != -1 && endBracket < endVal2) endVal2 = endBracket;
+                val = line.substring(pos, endVal2);
+                val.trim();
+              }
+            }
+          }
+          // HTML-escape
+          val.replace("&", "&amp;");
+          val.replace("<", "&lt;");
+          val.replace(">", "&gt;");
+          html += "<td>" + val + "</td>";
+        }
+        html += "</tr>";
+      }
+      html += "</table></div>";
+      html += "<div class='status-bar'>" + String(dataRows) + " rows loaded</div>";
+    }
+
+    html += "</div></body></html>";
     gWebServer.send(200, "text/html", html);
   });
 
