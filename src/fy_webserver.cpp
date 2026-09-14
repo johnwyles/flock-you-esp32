@@ -38,20 +38,29 @@ void fyWebServerStart() {
 
   // Stop promiscuous mode before switching to AP mode
   esp_wifi_set_promiscuous(false);
-  delay(10);
+  delay(100);
 
   // Stop WiFi driver completely
   esp_wifi_stop();
+  delay(100);
 
-  // IMPORTANT: WiFi.softAP() calls WiFi.mode() which calls esp_wifi_set_mode()
-  // internally. This creates the AP netif and initializes TCP/IP stack.
-  // We must call it BEFORE esp_wifi_start() so the netif exists.
-  // The 'listen_interval' parameter set to 0 disables DTIM.
-  WiFi.softAP(ssid, pass, 6, false, 4, false);
-
-  // Now start WiFi in AP mode
+  // Use ESP-IDF API directly for clean WiFi restart — same pattern as
+  // setup() which uses esp_wifi_init/start (not Arduino WiFi API)
+  esp_wifi_set_mode(WIFI_MODE_AP);
+  delay(50);
   esp_wifi_start();
   delay(200);
+
+  // Configure softAP with SSID, password, channel, max connections
+  wifi_config_t apConfig = {};
+  memset(&apConfig, 0, sizeof(apConfig));
+  strcpy((char*)apConfig.ap.ssid, ssid);
+  strcpy((char*)apConfig.ap.password, pass);
+  apConfig.ap.ssid_len = strlen(ssid);
+  apConfig.ap.max_connection = 4;
+  apConfig.ap.authmode = strlen(pass) >= 8 ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
+  apConfig.ap.channel = 6;
+  esp_wifi_set_config(WIFI_IF_AP, &apConfig);
 
   // Configure AP IP and DHCP
   WiFi.softAPConfig(FY_WS_IP, FY_WS_GATEWAY, FY_WS_SUBNET);
@@ -187,8 +196,10 @@ void fyWebServerStart() {
   });
 
   gWebServer.begin();
+  delay(100);  // let TCP listener bind
   gWebServerActive = true;
   mb_wifiStatus = "connected";
+  Serial.println("[webserver] HTTP server on port 80 ready");
 }
 
 void fyWebServerStop() {
