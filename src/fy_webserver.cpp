@@ -49,10 +49,10 @@ void fyWebServerStart() {
   WiFi.begin(ssid, pass);
   delay(100);
 
-  // Wait for connection + DHCP lease (up to 15 seconds)
+  // Wait for connection + DHCP lease (up to 30 seconds)
   Serial.printf("[webserver] Connecting to %s...\n", ssid);
   unsigned long startMs = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - startMs < 15000) {
+  while (WiFi.status() != WL_CONNECTED && millis() - startMs < 30000) {
     delay(500);
     Serial.printf("[webserver] connecting... %lus\n", (millis() - startMs) / 1000);
   }
