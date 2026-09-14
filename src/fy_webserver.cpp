@@ -68,7 +68,15 @@ void fyWebServerStart() {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("[webserver] WiFi connect failed, aborting");
     mb_wifiStatus = "connect failed";
-    // Restore promiscuous scanning
+    // Clean up WiFi before restoring scanning
+    WiFi.disconnect(true);
+    esp_wifi_stop();
+    delay(100);
+    esp_wifi_set_mode(WIFI_MODE_NULL);
+    esp_wifi_start();
+    delay(100);
+    // Restore promiscuous mode + channel
+    applyInitialChannel();
     esp_wifi_set_promiscuous(true);
     return;
   }
@@ -212,9 +220,10 @@ void fyWebServerStart() {
       if (!sdPath.startsWith("/")) sdPath = String("/") + sdPath;
       File f = SD.open(sdPath.c_str(), "r");
       if (f) {
-        gWebServer.sendHeader("Content-Type", "application/json");
-        gWebServer.streamFile(f, "application/json");
+        String body = f.readString();
         f.close();
+        yield();
+        gWebServer.send(200, "application/json", body);
         return;
       }
     }
@@ -222,9 +231,10 @@ void fyWebServerStart() {
     if (fySpiffsReady) {
       File f = SPIFFS.open(name.c_str(), "r");
       if (f) {
-        gWebServer.sendHeader("Content-Type", "application/json");
-        gWebServer.streamFile(f, "application/json");
+        String body = f.readString();
         f.close();
+        yield();
+        gWebServer.send(200, "application/json", body);
         return;
       }
     }
@@ -242,6 +252,7 @@ void fyWebServerStart() {
       if (f) {
         String body = f.readString();
         f.close();
+        yield();
         gWebServer.send(200, "application/json", body);
         return;
       }
@@ -251,6 +262,7 @@ void fyWebServerStart() {
       if (f) {
         String body = f.readString();
         f.close();
+        yield();
         gWebServer.send(200, "application/json", body);
         return;
       }
@@ -277,6 +289,7 @@ void fyWebServerStart() {
       if (f) {
         body = f.readString();
         f.close();
+        yield();
       }
     }
     if (body.length() == 0 && fySpiffsReady) {
