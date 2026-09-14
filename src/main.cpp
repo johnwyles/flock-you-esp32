@@ -1115,8 +1115,11 @@ static void fyLoadDailySession()
   }
   f.close();
   if (count > 0) {
-    fyDetCount = (int)count;
-    fyLastSaveCount = fyDetCount;
+    // Don't set fyDetCount from loaded file — the detections are in the
+    // file, not in the live fyDet[] array. Resetting to 0 gives a clean
+    // "Monitoring..." display on boot; new live detections increment from
+    // zero. The loaded count is logged to serial for reference.
+    fyLastSaveCount = (int)count;
     dualPrintf("[flockyou] Loaded daily file: %s (count=%ld)\n", dailyPath, count);
   }
 }

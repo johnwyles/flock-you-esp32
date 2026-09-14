@@ -257,6 +257,7 @@ static void uiTaskFn(void* pv) {
     (void)pv;
     uint32_t      consumedAlertSeq  = 0;
     unsigned long lastC5HeartbeatMs = 0;
+    bool           lastWsMode = false;   // detect gWebServerMode transition
     const TickType_t period = pdMS_TO_TICKS(50);
 
     for (;;) {
@@ -320,6 +321,13 @@ static void uiTaskFn(void* pv) {
                                 scan.spiffsOk, (int)FY_OUI_HIGH_COUNT, (int)FY_OUI_MFR_COUNT);
             }
         } else {
+            // Transition from web server mode back to scanning:
+            // force a full redraw of the scanning screen by invalidating
+            // the last-drawn detection count (tricks m5basicScanning into
+            // taking the contentChanged path).
+            if (lastWsMode) {
+                mb_lastDetCount = -1;
+            }
             if (alertWins) {
                 m5basicDetection(alert.method, alert.mac, alert.confidence, alert.rssi,
                                   alert.channel, alert.ssid, alert.detCount, alert.lastSeenMs);
@@ -327,6 +335,7 @@ static void uiTaskFn(void* pv) {
             m5basicScanning(scan.channel, scan.modeName, scan.detCount, now,
                             scan.spiffsOk, (int)FY_OUI_HIGH_COUNT, (int)FY_OUI_MFR_COUNT);
         }
+        lastWsMode = gWebServerMode;
         {
             int btn = m5basicButtonTick();
             if (btn == 1 || btn == 2 || btn == 3 || btn == 4) uiSetButtonAction((uint8_t)btn);
