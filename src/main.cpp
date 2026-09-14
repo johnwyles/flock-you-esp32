@@ -2879,39 +2879,15 @@ void loop()
   // even when the web server is active, so we can CMD:WEB to stop it
   fySerialProcess();
 
-  // Web server mode — pause scanning while AP is active
-  if (gWebServerMode) {
-    fyWebServerTick();
-    // Pause promiscuous and scanning while webserver is active
-    esp_wifi_set_promiscuous(false);
-    return;
-  }
-
-  // Sub-GHz scan (non-blocking, ~300ms full band scan)
-  if (gHasCC1101) {
-    static unsigned long lastScan = 0;
-    if (millis() - lastScan > 5000) { // scan every 5s
-      cc1101Scan();
-      lastScan = millis();
-    }
-  }
-  ledTick();
-
-#if defined(ENABLE_BLE_SCAN) && ENABLE_BLE_SCAN
-  bleScanTick(fyPromiscPaused);
-#if defined(BLE_SELF_TEST) && BLE_SELF_TEST
-  bleSelfTestTick(g_pBLEAdv);
-#endif
-#endif
-
-#if defined(USE_M5BASIC) || defined(USE_M5STICKC_PLUS_SE)
   // Button presses are now detected on the UI task (ui_task.h) — it is the
   // only task allowed to touch M5Unified (M5.update()/M5.BtnX) since that
   // object is shared with the display and is not thread-safe. loop() just
   // consumes whichever action (if any) the UI task recorded since the last
-  // check. Action codes: 1 = Btn A (save), 2 = Btn B (waypoint), 3 = Btn C (det list)
-  // channel hop). M5Basic's brightness cycle (Btn B) and Core2's vibration
-  // tick are handled entirely inside the UI task and need no feedback here.
+  // check. Action codes: 1 = Btn A (save), 2 = Btn B (waypoint), 3 = Btn C
+  // (det list / web exit), 4 = Btn C long (web toggle).
+  // NOTE: must run BEFORE the gWebServerMode early-return below so that
+  // Btn C can stop the web server while it's active.
+#if defined(USE_M5BASIC) || defined(USE_M5STICKC_PLUS_SE)
   {
     uint8_t btn = uiTakeButtonAction();
     if (btn == 1)
@@ -2951,6 +2927,31 @@ void loop()
       Serial.printf("[flockyou] Web server: %s\n", gWebServerMode ? "ON" : "OFF");
     }
   }
+#endif
+
+  // Web server mode — pause scanning while AP is active
+  if (gWebServerMode) {
+    fyWebServerTick();
+    // Pause promiscuous and scanning while webserver is active
+    esp_wifi_set_promiscuous(false);
+    return;
+  }
+
+  // Sub-GHz scan (non-blocking, ~300ms full band scan)
+  if (gHasCC1101) {
+    static unsigned long lastScan = 0;
+    if (millis() - lastScan > 5000) { // scan every 5s
+      cc1101Scan();
+      lastScan = millis();
+    }
+  }
+  ledTick();
+
+#if defined(ENABLE_BLE_SCAN) && ENABLE_BLE_SCAN
+  bleScanTick(fyPromiscPaused);
+#if defined(BLE_SELF_TEST) && BLE_SELF_TEST
+  bleSelfTestTick(g_pBLEAdv);
+#endif
 #endif
 
 #if defined(HAS_SIMPLE_BUTTON)
