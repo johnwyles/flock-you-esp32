@@ -82,11 +82,27 @@ void fyWebServerStart() {
   mb_webLogMs = millis();
   Serial.printf("[webserver] Connected to %s, web server on %s:80\n", ssid, ip.toString().c_str());
 
+  // CSS styles shared across all pages
+  static const char *pageCSS =
+    "<style>"
+    "body{font-family:monospace;background:#1a1a2e;color:#e0e0e0;margin:0;padding:20px;}"
+    "h1{color:#00d4ff;border-bottom:2px solid #00d4ff;padding-bottom:5px;}"
+    "a{color:#00d4ff;text-decoration:none;margin-right:10px;}"
+    "a:hover{color:#00ff88;text-decoration:underline;}"
+    "table{border-collapse:collapse;margin:15px 0;width:100%;}"
+    "th,td{border:1px solid #333;padding:4px 8px;text-align:left;}"
+    "th{background:#16213e;color:#00d4ff;}"
+    "tr:nth-child(even){background:#16213e;}"
+    ".links{display:flex;gap:5px;margin:3px 0;}"
+    ".btn{display:inline-block;padding:2px 10px;background:#16213e;color:#00d4ff;border-radius:3px;}"
+    ".btn:hover{background:#0f3460;}"
+    "</style>";
+
   // List all available files ordered by date
   gWebServer.on("/files", []() {
     snprintf(mb_webLog, sizeof(mb_webLog), "GET /files from %s", gWebServer.client().remoteIP().toString().c_str());
     mb_webLogMs = millis();
-    String html = "<html><body><h1>flock-you files</h1><ul>";
+    String html = "<html><head>" + String(pageCSS) + "</head><body><h1>flock-you files</h1><ul>";
     bool found = false;
     // List files from SD card if present
     if (gStorageReady) {
@@ -115,7 +131,8 @@ void fyWebServerStart() {
           }
         }
         for (int i = 0; i < count; i++) {
-          html += "<li><a href='/file?name=" + names[i] + "'>" + names[i] + "</a></li>";
+          html += "<div class='links'><a class='btn' href='/file?name=" + names[i] + "'>JSON</a>"
+                + "<a class='btn' href='/table?name=" + names[i] + "'>Table</a></div>";
           found = true;
         }
       }
@@ -145,12 +162,13 @@ void fyWebServerStart() {
           }
         }
         for (int i = 0; i < count; i++) {
-          html += "<li><a href='/file?name=" + names[i] + "'>" + names[i] + "</a></li>";
+          html += "<div class='links'><a class='btn' href='/file?name=" + names[i] + "'>JSON</a>"
+                + "<a class='btn' href='/table?name=" + names[i] + "'>Table</a></div>";
           found = true;
         }
       }
     }
-    if (!found) html += "<li>(none yet)</li>";
+    if (!found) html += "<p>(none yet)</p>";
     html += "</ul></body></html>";
     gWebServer.send(200, "text/html", html);
   });
@@ -186,12 +204,65 @@ void fyWebServerStart() {
     gWebServer.send(404, "application/json", "{\"error\":\"not found\"}");
   });
 
+  // Table view — serves an HTML page with JavaScript that fetches the JSON
+  // and renders it as a table with dynamic headers
+  gWebServer.on("/table", []() {
+    String name = gWebServer.arg("name");
+    snprintf(mb_webLog, sizeof(mb_webLog), "GET /table?name=%s from %s", name.c_str(), gWebServer.client().remoteIP().toString().c_str());
+    mb_webLogMs = millis();
+    String html = "<html><head><title>Table: " + name + "</title>" + String(pageCSS) + "</head><body>";
+    html += "<h1>Detections: " + name + "</h1>";
+    html += "<p><a class='btn' href='/files'>← Back to files</a></p>";
+    html += "<div id='table-container'></div>";
+    html += "<script>";
+    // Fetch the JSON file (served by /file handler) and build a table
+    html += "fetch('/file?name=" + name + "').then(r=>r.text()).then(raw=>{";
+    html += "  // Skip the header line (JSON metadata), parse remaining lines as JSON";
+    html += "  let lines = raw.trim().split('\\n');";
+    html += "  let header = lines[0];";
+    html += "  // If file has JSON header line starting with {, skip it";
+    html += "  if(lines.length > 1 && lines[0].startsWith('{')) {";
+    html += "    lines = lines.slice(1);";
+    html += "  }";
+    html += "  let data = lines.map(l => {try{return JSON.parse(l)}catch(e){return null}}).filter(x=>x)";
+    html += "  if(data.length === 0) {";
+    html += "    document.getElementById('table-container').innerHTML = '<p>No data found.</p>';";
+    html += "    return;";
+    html += "  }";
+    // Collect all column names from all rows
+    html += "  let cols = [];";
+    html += "  data.forEach(row => {Object.keys(row).forEach(k => {if(cols.indexOf(k)===-1) cols.push(k)})})";
+    html += "  let t = '<table><thead><tr>'";
+    html += "  cols.forEach(c => {t += '<th>'+c+'</th>'})";
+    html += "  t += '</tr></thead><tbody>'";
+    html += "  data.forEach(row => {";
+    html += "    t += '<tr>'";
+    html += "    cols.forEach(c => {";
+    html += "      let v = row[c];";
+    html += "      if(v && typeof v === 'object') v = JSON.stringify(v)";
+    html += "      else if(v === null) v = ''";
+    html += "      else v = String(v)";
+    html += "      t += '<td>'+v.replace(/</g,'&lt;')+'</td>'";
+    html += "    })";
+    html += "    t += '</tr>'";
+    html += "  })";
+    html += "  t += '</tbody></table>'";
+    html += "  document.getElementById('table-container').innerHTML = t";
+    html += "}).catch(e=>{";
+    html += "  document.getElementById('table-container').innerHTML = '<p>Error loading data.</p>'";
+    html += "})";
+    html += "</script>";
+    html += "</body></html>";
+    gWebServer.send(200, "text/html", html);
+  });
+
   // Root status endpoint
   gWebServer.on("/", []() {
     int detCount = fyDetCount;
-    String html = "<html><body><h1>flock-you</h1>";
+    String html = "<html><head>" + String(pageCSS) + "</head><body>";
+    html += "<h1>flock-you</h1>";
     html += "<p>Detections: " + String(detCount) + "</p>";
-    html += "<p><a href='/files'>Browse files</a></p>";
+    html += "<p><a class='btn' href='/files'>Browse files</a></p>";
     html += "</body></html>";
     gWebServer.send(200, "text/html", html);
   });
