@@ -23,6 +23,11 @@ static IPAddress gApIP(192, 168, 4, 1);
 static const char *gApSSID = "flock-you";
 static const char *gApPass = "flockyou";
 
+// Public web server AP info (read by main.cpp for display)
+char gWebServerSSID[64] = "";
+char gWebServerPass[64] = "";
+char gWebServerIP[24] = "";
+
 WebServer gWebServer(80);
 
 void fyWebServerStart() {
@@ -52,8 +57,15 @@ void fyWebServerStart() {
   WiFi.softAPConfig(FY_WS_IP, FY_WS_GATEWAY, FY_WS_SUBNET);
   delay(50);
 
-  mb_wifiStatus = "connecting...";
-  snprintf(mb_webLog, sizeof(mb_webLog), "AP: %s", ssid);
+  mb_wifiStatus = "connected";
+  snprintf(mb_webLog, sizeof(mb_webLog), "SSID: %s\r\nPASS: %s\r\nIP: %s", ssid, pass, FY_WS_IP.toString().c_str());
+
+  // Populate public AP info for display
+  strncpy(gWebServerSSID, ssid, sizeof(gWebServerSSID) - 1);
+  gWebServerSSID[sizeof(gWebServerSSID) - 1] = '\0';
+  strncpy(gWebServerPass, pass, sizeof(gWebServerPass) - 1);
+  gWebServerPass[sizeof(gWebServerPass) - 1] = '\0';
+  snprintf(gWebServerIP, sizeof(gWebServerIP), "%s", FY_WS_IP.toString().c_str());
   mb_showWebLog = true;
   mb_webLogMs = millis();
   Serial.printf("[webserver] SSID=%s PASS=%s IP=%s\n", ssid, pass, FY_WS_IP.toString().c_str());

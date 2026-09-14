@@ -2417,10 +2417,18 @@ void m5basicDrawWebLog() {
     M5.Display.print("WEB SERVER");
     M5.Display.setCursor(10, MB_HDR_H + 28);
     M5.Display.setTextSize(1);
+    M5.Display.setTextColor(MB_WHITE, MB_DARK_GRN);
     M5.Display.printf("WiFi: %s", mb_wifiStatus);
+    // Show AP details on separate lines
     M5.Display.setCursor(4, MB_HDR_H + 46);
     M5.Display.setTextColor(MB_WHITE, MB_DARK_GRN);
-    M5.Display.printf("%s", mb_webLog);
+    M5.Display.printf("SSID: %s", gWebServerSSID);
+    M5.Display.setCursor(4, MB_HDR_H + 60);
+    M5.Display.setTextColor(MB_WHITE, MB_DARK_GRN);
+    M5.Display.printf("PASS: %s", gWebServerPass);
+    M5.Display.setCursor(4, MB_HDR_H + 74);
+    M5.Display.setTextColor(MB_WHITE, MB_DARK_GRN);
+    M5.Display.printf("IP:   %s  Hold BtnC to exit", gWebServerIP);
 }
 
 void setup() {

@@ -23,6 +23,11 @@ extern bool fySpiffsReady;
 // ── Web server mode toggle (defined in main.cpp, used by fy_serial.cpp) ───────
 extern bool gWebServerMode;
 
+// ── Web server AP info (defined in fy_webserver.cpp, used by main.cpp display) ──
+extern char gWebServerSSID[64];
+extern char gWebServerPass[64];
+extern char gWebServerIP[24];
+
 // ── Debug level (defined in main.cpp, used by fy_serial.cpp) ───────────────────
 extern int gDebugLevel;
 
