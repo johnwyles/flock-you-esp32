@@ -296,6 +296,8 @@ void fyWebServerStart() {
   // Table view — parse JSON on server and render as HTML table
   // Uses WiFiClient directly to stream response — avoids WebServer timeout
   // during slow String-based JSON parsing on marginal WiFi links.
+  // File format: line 0 = metadata header, line 1+ = JSON objects (either
+  // one per line, or a single JSON array on one line with [{...},{...}]).
   gWebServer.on("/table", []() {
     String name = gWebServer.arg("name");
     snprintf(mb_webLog, sizeof(mb_webLog), "GET /table?name=%s from %s", name.c_str(), gWebServer.client().remoteIP().toString().c_str());
@@ -325,23 +327,6 @@ void fyWebServerStart() {
     // Get the WiFi client directly for streaming
     WiFiClient client = gWebServer.client();
 
-    if (body.length() == 0) {
-      client.print(
-        "HTTP/1.1 200 OK\r\n"
-        "Content-Type: text/html\r\n"
-        "Connection: close\r\n"
-        "Access-Control-Allow-Origin: *\r\n"
-        "\r\n"
-      );
-      client.print("<html><head>" + String(pageCSS) + "</head><body><div class='container'>");
-      client.print("<h1>Detections: " + name + "</h1>");
-      client.print("<p><a class='btn btn-back' href='/files'>Back to files</a></p>");
-      client.print("<div class='card'><p>File not found.</p></div>");
-      client.print("</div></body></html>");
-      client.stop();
-      return;
-    }
-
     // Send HTTP headers
     client.print(
       "HTTP/1.1 200 OK\r\n"
@@ -358,129 +343,165 @@ void fyWebServerStart() {
     client.print("<p><a class='btn btn-back' href='/files'>Back to files</a></p>");
     client.flush();
 
-    // Parse the JSONL format: line 0 is metadata header, rest are JSON objects
-    int start = 0;
-    int lineNum = 0;
-    int dataRows = 0;
-    char firstLineBuf[512] = "";
-    int firstLineLen = 0;
-
-    // First pass: find columns from first data line
-    while (start < body.length()) {
-      int nl = body.indexOf('\n', start);
-      if (nl == -1) nl = body.length();
-      int lineLen = nl - start;
-      if (lineLen >= 10) {
-        // Skip metadata header (line 0 with "v": field)
-        if (lineNum == 0 && body[start] == '{' && body.indexOf("\"v\":", start) < nl) {
-          lineNum++;
-          start = nl + 1;
-          continue;
-        }
-        if (dataRows == 0 && lineLen < (int)sizeof(firstLineBuf) - 1) {
-          body.substring(start, nl).toCharArray(firstLineBuf, sizeof(firstLineBuf));
-          firstLineLen = lineLen;
-        }
-        dataRows++;
-      }
-      lineNum++;
-      start = nl + 1;
-      yield();
-    }
-
-    if (dataRows == 0 || firstLineLen == 0) {
-      client.print("<div class='card'><p>No data rows found.</p></div>");
-      client.print("<div class='status-bar'>0 rows loaded</div>");
+    if (body.length() == 0) {
+      client.print("<div class='card'><p>File not found.</p></div>");
       client.print("</div></body></html>");
       client.stop();
       return;
     }
 
-    // Extract column names from firstLineBuf
-    String firstLine = firstLineBuf;
+    // Find the JSON array: look for the first '[' after the metadata header
+    int arrStart = body.indexOf('[');
+    if (arrStart == -1) {
+      client.print("<div class='card'><p>No data array found.</p></div>");
+      client.print("</div></body></html>");
+      client.stop();
+      return;
+    }
+
+    // Extract column names from the first object in the array
+    // Find first '{"' after arrStart
+    int objStart = body.indexOf('{', arrStart);
+    if (objStart == -1) {
+      client.print("<div class='card'><p>No data objects found.</p></div>");
+      client.print("</div></body></html>");
+      client.stop();
+      return;
+    }
+
+    // Find the end of the first object (matching '}')
+    int objEnd = objStart;
+    int depth = 0;
+    bool inStr = false;
+    bool escape = false;
+    for (int i = objStart; i < body.length(); i++) {
+      char c = body.charAt(i);
+      if (escape) { escape = false; continue; }
+      if (c == '\\' && inStr) { escape = true; continue; }
+      if (c == '"') { inStr = !inStr; continue; }
+      if (inStr) continue;
+      if (c == '{') depth++;
+      else if (c == '}') {
+        depth--;
+        if (depth == 0) {
+          objEnd = i;
+          break;
+        }
+      }
+    }
+
+    // Extract first object as a String for column extraction
+    String firstObj = body.substring(objStart, objEnd + 1);
+
+    // Send table header
     client.print("<table><thead><tr>");
     int p = 0;
-    int depth = 0;
-    while (p < firstLine.length()) {
-      char c = firstLine.charAt(p);
+    depth = 0;
+    inStr = false;
+    escape = false;
+    while (p < firstObj.length()) {
+      char c = firstObj.charAt(p);
+      if (escape) { escape = false; p++; continue; }
+      if (c == '\\' && inStr) { escape = true; p++; continue; }
+      if (c == '"') { inStr = !inStr; p++; continue; }
+      if (inStr) { p++; continue; }
       if (c == '{') depth++;
       else if (c == '}') depth--;
       if (depth == 1 && c == '"') {
-        int q2 = firstLine.indexOf('"', p + 1);
+        int q2 = firstObj.indexOf('"', p + 1);
         if (q2 != -1) {
-          String key = firstLine.substring(p + 1, q2);
+          String key = firstObj.substring(p + 1, q2);
           client.print("<th>" + key + "</th>");
           p = q2 + 1;
-          int colon = firstLine.indexOf(':', p);
-          if (colon != -1) p = colon + 1;
           continue;
         }
       }
       p++;
+      yield();
     }
     client.print("</tr></thead><tbody>");
     client.flush();
 
-    // Second pass: generate rows
-    start = 0;
-    lineNum = 0;
-    while (start < body.length()) {
-      int nl = body.indexOf('\n', start);
-      if (nl == -1) nl = body.length();
-      int lineLen = nl - start;
-      if (lineLen >= 10) {
-        // Skip metadata header
-        if (lineNum == 0 && body[start] == '{' && body.indexOf("\"v\":", start) < nl) {
-          lineNum++;
-          start = nl + 1;
-          continue;
+    // Now iterate through all objects in the array
+    int dataRows = 0;
+    int pos = objStart;
+    while (pos < body.length()) {
+      // Find the start of the next object
+      int oStart = body.indexOf('{', pos);
+      if (oStart == -1) break;
+      // Find the matching closing brace
+      int oEnd = oStart;
+      depth = 0;
+      inStr = false;
+      escape = false;
+      for (int i = oStart; i < body.length(); i++) {
+        char c = body.charAt(i);
+        if (escape) { escape = false; continue; }
+        if (c == '\\' && inStr) { escape = true; continue; }
+        if (c == '"') { inStr = !inStr; continue; }
+        if (inStr) continue;
+        if (c == '{') depth++;
+        else if (c == '}') {
+          depth--;
+          if (depth == 0) {
+            oEnd = i;
+            break;
+          }
         }
-        lineNum++;
-        String line = body.substring(start, nl);
-        client.print("<tr>");
-        p = 0;
-        depth = 0;
-        while (p < line.length()) {
-          char c = line.charAt(p);
-          if (c == '{') depth++;
-          else if (c == '}') depth--;
-          if (depth == 1 && c == '"') {
-            int q2 = line.indexOf('"', p + 1);
-            if (q2 != -1) {
-              int colon = line.indexOf(':', q2 + 1);
-              if (colon != -1) {
-                p = colon + 1;
-                while (p < line.length() && (line.charAt(p) == ' ' || line.charAt(p) == '\t')) p++;
-                String val = "";
-                if (p < line.length() && line.charAt(p) == '"') {
-                  int endQ = line.indexOf('"', p + 1);
-                  if (endQ != -1) {
-                    val = line.substring(p + 1, endQ);
-                    val.replace("\\\"", "\"");
-                    val.replace("\\\\", "\\");
-                  }
-                } else {
-                  int endVal = line.indexOf(',', p);
-                  if (endVal == -1) endVal = line.indexOf('}', p);
-                  if (endVal == -1) endVal = line.indexOf(']', p);
-                  if (endVal == -1) endVal = line.length();
-                  val = line.substring(p, endVal);
-                  val.trim();
+      }
+
+      // Extract this object and generate a row
+      String obj = body.substring(oStart, oEnd + 1);
+      client.print("<tr>");
+      p = 0;
+      depth = 0;
+      inStr = false;
+      escape = false;
+      while (p < obj.length()) {
+        char c = obj.charAt(p);
+        if (escape) { escape = false; p++; continue; }
+        if (c == '\\' && inStr) { escape = true; p++; continue; }
+        if (c == '"') { inStr = !inStr; p++; continue; }
+        if (inStr) { p++; continue; }
+        if (c == '{') depth++;
+        else if (c == '}') depth--;
+        if (depth == 1 && c == '"') {
+          int q2 = obj.indexOf('"', p + 1);
+          if (q2 != -1) {
+            int colon = obj.indexOf(':', q2 + 1);
+            if (colon != -1) {
+              p = colon + 1;
+              while (p < obj.length() && (obj.charAt(p) == ' ' || obj.charAt(p) == '\t')) p++;
+              String val = "";
+              if (p < obj.length() && obj.charAt(p) == '"') {
+                int endQ = obj.indexOf('"', p + 1);
+                if (endQ != -1) {
+                  val = obj.substring(p + 1, endQ);
+                  val.replace("\\\"", "\"");
+                  val.replace("\\\\", "\\");
                 }
-                val.replace("&", "&amp;");
-                val.replace("<", "&lt;");
-                val.replace(">", "&gt;");
-                client.print("<td>" + val + "</td>");
-                p = q2 + 1;
-                continue;
+              } else {
+                int endVal = obj.indexOf(',', p);
+                if (endVal == -1) endVal = obj.indexOf('}', p);
+                if (endVal == -1) endVal = obj.indexOf(']', p);
+                if (endVal == -1) endVal = obj.length();
+                val = obj.substring(p, endVal);
+                val.trim();
               }
+              val.replace("&", "&amp;");
+              val.replace("<", "&lt;");
+              val.replace(">", "&gt;");
+              client.print("<td>" + val + "</td>");
+              p = q2 + 1;
+              continue;
             }
           }
-          p++;
         }
-        client.print("</tr>");
+        p++;
       }
-      start = nl + 1;
+      client.print("</tr>");
+      dataRows++;
+      pos = oEnd + 1;
       yield();
     }
     client.print("</tbody></table></div>");
