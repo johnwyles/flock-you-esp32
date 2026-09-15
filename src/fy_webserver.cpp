@@ -50,11 +50,9 @@ void fyWebServerStart() {
   esp_wifi_stop();
   delay(100);
 
-  // Set WiFi to station mode explicitly (not promiscuous/scanner mode)
-  WiFi.mode(WIFI_MODE_STA);
-  delay(50);
-  // Start the WiFi driver (WiFi.mode doesn't start it, begin does, but
-  // after esp_wifi_stop() we need to ensure the driver is fresh)
+  // Start the WiFi driver in station mode using ESP-IDF API
+  // Then use WiFi.begin() to trigger the connection (handles DHCP too)
+  esp_wifi_set_mode(WIFI_MODE_STA);
   esp_wifi_start();
   delay(100);
 
@@ -74,7 +72,6 @@ void fyWebServerStart() {
     Serial.println("[webserver] WiFi connect failed, aborting");
     mb_wifiStatus = "connect failed";
     // Clean up WiFi before restoring scanning
-    WiFi.disconnect(true);
     esp_wifi_stop();
     delay(100);
     esp_wifi_set_mode(WIFI_MODE_NULL);
