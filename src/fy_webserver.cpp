@@ -23,6 +23,11 @@ static IPAddress gApIP(192, 168, 4, 1);
 static const char *gApSSID = "flock-you";
 static const char *gApPass = "flockyou";
 
+// File list cache — populated at web server start, used by /files endpoint
+// This avoids slow SD enumeration during HTTP request handling.
+static String gFileCache = "";
+static unsigned long gFileCacheMs = 0;
+
 // Public web server AP info (read by main.cpp for display)
 char gWebServerSSID[64] = "";
 char gWebServerPass[64] = "";
@@ -98,6 +103,10 @@ void fyWebServerStart() {
   mb_webLogMs = millis();
   Serial.printf("[webserver] Connected to %s, web server on %s:80\n", ssid, ip.toString().c_str());
 
+  // File list cache is populated below after WiFi connects.
+  gFileCache = "";
+  gFileCacheMs = millis();
+
   // CSS styles shared across all pages
   static const char *pageCSS =
     "<style>"
@@ -129,78 +138,23 @@ void fyWebServerStart() {
     mb_webLogMs = millis();
     String html = "<html><head>" + String(pageCSS) + "</head><body><div class='container'><h1>flock-you files</h1><div class='card'>";
     bool found = false;
-    // List files from SD card if present
-    if (gStorageReady) {
-      yield();
-      File root = SD.open("/");
-      if (root) {
-        yield();
-        String names[32];
-        int count = 0;
-        File f = root.openNextFile();
-        while (f && count < 32) {
-          if (!f.isDirectory()) {
-            String fname = f.name();
-            if (fname.startsWith("flock_you-") || fname.startsWith("waypoints-")) {
-              names[count++] = fname;
-            }
-          }
-          f = root.openNextFile();
-          yield();  // prevent WiFi watchdog timeout
-        }
-        root.close();
-        // Bubble sort by name
-        for (int i = 0; i < count; i++) {
-          for (int j = i + 1; j < count; j++) {
-            if (names[j] < names[i]) {
-              String tmp = names[i];
-              names[i] = names[j];
-              names[j] = tmp;
-            }
-          }
-        }
-        for (int i = 0; i < count; i++) {
-          // Strip leading "/" for URL (SD files have it, SPIFFS doesn't)
-          String urlName = names[i];
-          if (urlName.startsWith("/")) urlName = urlName.substring(1);
-          html += "<div class='file-item'><span class='fname'>" + names[i] + "</span><div>";
-          html += "<a class='btn' href='/file?name=" + urlName + "'>JSON</a>";
-          html += "<a class='btn' href='/table?name=" + urlName + "'>Table</a></div></div>";
-          found = true;
-        }
-      }
-    }
-    // List files from SPIFFS if available
-    if (fySpiffsReady) {
-      fs::File root = SPIFFS.open("/");
-      if (root) {
-        String names[32];
-        int count = 0;
-        fs::File f = root.openNextFile();
-        while (f && count < 32) {
-          String name = f.name();
-          if (name.startsWith("flock_you-") || name.startsWith("waypoints-")) {
-            names[count++] = name;
-          }
-          f = root.openNextFile();
-        }
-        root.close();
-        // Bubble sort by name
-        for (int i = 0; i < count; i++) {
-          for (int j = i + 1; j < count; j++) {
-            if (names[j] < names[i]) {
-              String tmp = names[i];
-              names[i] = names[j];
-              names[j] = tmp;
-            }
-          }
-        }
-        for (int i = 0; i < count; i++) {
-          html += "<div class='file-item'><span class='fname'>" + names[i] + "</span><div>";
-          html += "<a class='btn' href='/file?name=" + names[i] + "'>JSON</a>";
-          html += "<a class='btn' href='/table?name=" + names[i] + "'>Table</a></div></div>";
-          found = true;
-        }
+
+    // Use cached file list (populated at web server start)
+    // This avoids slow SD card enumeration during HTTP request handling.
+    if (gFileCache.length() > 0) {
+      int idx = 0;
+      while (idx < gFileCache.length()) {
+        int pipe = gFileCache.indexOf('|', idx);
+        if (pipe == -1) break;
+        String fname = gFileCache.substring(idx, pipe);
+        idx = pipe + 1;
+        if (fname.length() == 0) continue;
+        String urlName = fname;
+        if (urlName.startsWith("/")) urlName = urlName.substring(1);
+        html += "<div class='file-item'><span class='fname'>" + fname + "</span><div>";
+        html += "<a class='btn' href='/file?name=" + urlName + "'>JSON</a>";
+        html += "<a class='btn' href='/table?name=" + urlName + "'>Table</a></div></div>";
+        found = true;
       }
     }
     if (!found) html += "<p>(none yet)</p>";
@@ -297,6 +251,7 @@ void fyWebServerStart() {
       if (f) {
         body = f.readString();
         f.close();
+        yield();
       }
     }
 
@@ -304,7 +259,7 @@ void fyWebServerStart() {
       html += "<div class='card'><p>File not found.</p></div>";
     } else {
       // Simple approach: each line is a JSON object (skip metadata header)
-      // Use a single-pass parser that builds table rows as it finds keys
+      // Parse in a single pass to minimize memory usage.
       int start = 0;
       int lineNum = 0;
       int dataRows = 0;
@@ -330,7 +285,7 @@ void fyWebServerStart() {
           colsFound = true;
         }
         dataRows++;
-        yield();  // prevent watchdog
+        yield();
       }
 
       // Extract column names from first data line
@@ -441,6 +396,44 @@ void fyWebServerStart() {
     html += "</div></body></html>";
     gWebServer.send(200, "text/html", html);
   });
+
+  // Cache file list before starting HTTP server
+  gFileCache = "";
+  if (gStorageReady) {
+    File root = SD.open("/");
+    if (root) {
+      File f = root.openNextFile();
+      while (f) {
+        if (!f.isDirectory()) {
+          String fname = f.name();
+          if (fname.startsWith("flock_you-") || fname.startsWith("waypoints-")) {
+            gFileCache += fname;
+            gFileCache += "|";
+          }
+        }
+        f = root.openNextFile();
+        yield();
+      }
+      root.close();
+    }
+  }
+  if (fySpiffsReady) {
+    fs::File root = SPIFFS.open("/");
+    if (root) {
+      fs::File f = root.openNextFile();
+      while (f) {
+        String fname = f.name();
+        if (fname.startsWith("flock_you-") || fname.startsWith("waypoints-")) {
+          gFileCache += fname;
+          gFileCache += "|";
+        }
+        f = root.openNextFile();
+        yield();
+      }
+      root.close();
+    }
+  }
+  gFileCacheMs = millis();
 
   gWebServer.begin();
   delay(100);  // let TCP listener bind
