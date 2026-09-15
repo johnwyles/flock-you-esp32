@@ -56,11 +56,14 @@ void fyWebServerStart() {
 #endif
 
   // Switch WiFi mode from promiscuous (NULL/STANDBY) to station mode.
-  // Use esp_wifi_set_mode() instead of stop/start to avoid tearing down
-  // the WiFi driver and losing ESP-NOW/BLE coex state.
+  // We must NOT call esp_wifi_stop() + esp_wifi_start() here — that tears
+  // down the driver and causes DHCP failures. Instead, use esp_wifi_set_mode()
+  // which transitions gracefully, then connect with ESP-IDF API.
   esp_wifi_set_promiscuous(false);
   delay(100);
   esp_wifi_set_mode(WIFI_MODE_STA);
+  // Channel switch may be needed — set to auto (let WiFi choose)
+  esp_wifi_set_channel(0, WIFI_SECOND_CHAN_NONE);
   delay(100);
 
   // Set WiFi configuration using ESP-IDF (ssid/pass already in fyWsReadConfig)
