@@ -142,94 +142,130 @@ void fyWebServerStart() {
     "</style>";
 
   // List all available files ordered by date
-  gWebServer.on("/files", []() {
-    snprintf(mb_webLog, sizeof(mb_webLog), "GET /files from %s", gWebServer.client().remoteIP().toString().c_str());
-    mb_webLogMs = millis();
-    String html = "<html><head>" + String(pageCSS) + "</head><body><div class='container'><h1>flock-you files</h1><div class='card'>";
-    bool found = false;
+    gWebServer.on("/files", []() {
+      snprintf(mb_webLog, sizeof(mb_webLog), "GET /files from %s", gWebServer.client().remoteIP().toString().c_str());
+      mb_webLogMs = millis();
 
-    // Use cached file list (populated at web server start)
-    // Format: "fname|source|fname|source|..." where source is "SD" or "SPIF"
-    if (gFileCache.length() > 0) {
-      int idx = 0;
-      int entryIdx = 0;
-      int totalItems = 0;
-      // Count total items first
-      for (int i = 0; i < gFileCache.length(); i++) {
-        if (gFileCache[i] == '|') totalItems++;
-      }
-      totalItems /= 2; // fname|source = 2 pipes per item
-      // Bubble sort by name (simple approach for small lists)
-      String names[32];
-      String sources[32];
-      int count = 0;
-      idx = 0;
-      while (idx < gFileCache.length() && count < 32) {
-        int pipe1 = gFileCache.indexOf('|', idx);
-        if (pipe1 == -1) break;
-        int pipe2 = gFileCache.indexOf('|', pipe1 + 1);
-        if (pipe2 == -1) break;
-        names[count] = gFileCache.substring(idx, pipe1);
-        sources[count] = gFileCache.substring(pipe1 + 1, pipe2);
-        idx = pipe2 + 1;
-        count++;
-      }
-      // Sort by name
-      for (int i = 0; i < count; i++) {
-        for (int j = i + 1; j < count; j++) {
-          if (names[j] < names[i]) {
-            String tn = names[i]; names[i] = names[j]; names[j] = tn;
-            String ts = sources[i]; sources[i] = sources[j]; sources[j] = ts;
-          }
+      // Get the WiFi client directly for streaming
+      WiFiClient client = gWebServer.client();
+
+      // Send HTTP headers
+      client.print(
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: text/html\r\n"
+        "Connection: close\r\n"
+        "Access-Control-Allow-Origin: *\r\n"
+        "\r\n"
+      );
+
+      // Stream HTML response in chunks
+      client.print("<html><head>");
+      client.print(pageCSS);
+      client.print("</head><body><div class='container'><h1>flock-you files</h1><div class='card'>");
+      bool found = false;
+
+      // Use cached file list (populated at web server start)
+      // Format: "fname|source|fname|source|..." where source is "SD" or "SPIF"
+      if (gFileCache.length() > 0) {
+        int idx = 0;
+        int entryIdx = 0;
+        int totalItems = 0;
+        // Count total items first
+        for (int i = 0; i < gFileCache.length(); i++) {
+          if (gFileCache[i] == '|') totalItems++;
         }
-      }
-      // Render sorted
-      for (int i = 0; i < count; i++) {
-        String srcLabel = sources[i];
-        if (srcLabel == "SD") srcLabel = "SD Card";
-        else if (srcLabel == "SPIF") srcLabel = "SPIFFS";
-        html += "<div class='file-item'><span class='fname'>" + names[i] + " <span class='status-bar'>(" + srcLabel + ")</span></span><div>";
-        html += "<a class='btn' href='/file?name=" + names[i] + "'>JSON</a>";
-        html += "<a class='btn' href='/table?name=" + names[i] + "'>Table</a></div></div>";
-        found = true;
-        entryIdx++;
-      }
-    }
-    // Fallback: enumerate SD card if cache is empty (shouldn't normally happen)
-    if (!found && gStorageReady) {
-      yield();
-      File root = SD.open("/");
-      if (root) {
-        yield();
+        totalItems /= 2; // fname|source = 2 pipes per item
+        // Bubble sort by name (simple approach for small lists)
         String names[32];
+        String sources[32];
         int count = 0;
-        File f = root.openNextFile();
-        while (f && count < 32) {
-          if (!f.isDirectory()) {
-            String fname = f.name();
-            if (fname.startsWith("flock_you-") || fname.startsWith("waypoints-")) {
-              names[count++] = fname;
+        idx = 0;
+        while (idx < gFileCache.length() && count < 32) {
+          int pipe1 = gFileCache.indexOf('|', idx);
+          if (pipe1 == -1) break;
+          int pipe2 = gFileCache.indexOf('|', pipe1 + 1);
+          if (pipe2 == -1) break;
+          names[count] = gFileCache.substring(idx, pipe1);
+          sources[count] = gFileCache.substring(pipe1 + 1, pipe2);
+          idx = pipe2 + 1;
+          count++;
+        }
+        // Sort by name
+        for (int i = 0; i < count; i++) {
+          for (int j = i + 1; j < count; j++) {
+            if (names[j] < names[i]) {
+              String tn = names[i]; names[i] = names[j]; names[j] = tn;
+              String ts = sources[i]; sources[i] = sources[j]; sources[j] = ts;
             }
           }
-          f = root.openNextFile();
-          yield();
         }
-        root.close();
-        for (int i = 0; i < count; i++) { for (int j = i + 1; j < count; j++) { if (names[j] < names[i]) { String tmp = names[i]; names[i] = names[j]; names[j] = tmp; } } }
+        // Render sorted
         for (int i = 0; i < count; i++) {
-          String urlName = names[i];
-          if (urlName.startsWith("/")) urlName = urlName.substring(1);
-          html += "<div class='file-item'><span class='fname'>" + names[i] + "</span><div>";
-          html += "<a class='btn' href='/file?name=" + urlName + "'>JSON</a>";
-          html += "<a class='btn' href='/table?name=" + urlName + "'>Table</a></div></div>";
+          String srcLabel = sources[i];
+          if (srcLabel == "SD") srcLabel = "SD Card";
+          else if (srcLabel == "SPIF") srcLabel = "SPIFFS";
+          client.print("<div class='file-item'><span class='fname'>");
+          client.print(names[i]);
+          client.print(" <span class='status-bar'>(");
+          client.print(srcLabel);
+          client.print(")</span></span><div>");
+          client.print("<a class='btn' href='/file?name=");
+          client.print(names[i]);
+          client.print("'>JSON</a>");
+          client.print("<a class='btn' href='/table?name=");
+          client.print(names[i]);
+          client.print("'>Table</a></div></div>");
           found = true;
+          entryIdx++;
         }
       }
-    }
-    if (!found) html += "<p>(none yet)</p>";
-    html += "</div></div></body></html>";
-    gWebServer.send(200, "text/html", html);
-  });
+      // Fallback: enumerate SD card if cache is empty (shouldn't normally happen)
+      if (!found && gStorageReady) {
+        yield();
+        File root = SD.open("/");
+        if (root) {
+          yield();
+          String names[32];
+          int count = 0;
+          File f = root.openNextFile();
+          while (f && count < 32) {
+            if (!f.isDirectory()) {
+              String fname = f.name();
+              if (fname.startsWith("flock_you-") || fname.startsWith("waypoints-")) {
+                names[count++] = fname;
+              }
+            }
+            f = root.openNextFile();
+            yield();
+          }
+          root.close();
+          for (int i = 0; i < count; i++) {
+            for (int j = i + 1; j < count; j++) {
+              if (names[j] < names[i]) {
+                String tmp = names[i]; names[i] = names[j]; names[j] = tmp;
+              }
+            }
+          }
+          for (int i = 0; i < count; i++) {
+            String urlName = names[i];
+            if (urlName.startsWith("/")) urlName = urlName.substring(1);
+            client.print("<div class='file-item'><span class='fname'>");
+            client.print(names[i]);
+            client.print("</span><div>");
+            client.print("<a class='btn' href='/file?name=");
+            client.print(urlName);
+            client.print("'>JSON</a>");
+            client.print("<a class='btn' href='/table?name=");
+            client.print(urlName);
+            client.print("'>Table</a></div></div>");
+            found = true;
+          }
+        }
+      }
+      if (!found) client.print("<p>(none yet)</p>");
+      client.print("</div></div></body></html>");
+      client.stop();
+    });
 
   // Serve specific file by name — check both SD and SPIFFS
   gWebServer.on("/file", []() {
@@ -521,14 +557,35 @@ void fyWebServerStart() {
 
   // Root status endpoint
   gWebServer.on("/", []() {
-    int detCount = fyDetCount;
-    String html = "<html><head>" + String(pageCSS) + "</head><body><div class='container'>";
-    html += "<h1>flock-you</h1>";
-    html += "<div class='card'><p>Detections: " + String(detCount) + "</p>";
-    html += "<p><a class='btn' href='/files'>Browse files</a></p></div>";
-    html += "<div class='status-bar'>Web server running on <strong>" + String(gWebServerIP) + ":80</strong></div>";
-    html += "</div></body></html>";
-    gWebServer.send(200, "text/html", html);
+    snprintf(mb_webLog, sizeof(mb_webLog), "GET / from %s", gWebServer.client().remoteIP().toString().c_str());
+    mb_webLogMs = millis();
+
+    // Get the WiFi client directly for streaming
+    WiFiClient client = gWebServer.client();
+
+    // Send HTTP headers
+    client.print(
+      "HTTP/1.1 200 OK\r\n"
+      "Content-Type: text/html\r\n"
+      "Connection: close\r\n"
+      "Access-Control-Allow-Origin: *\r\n"
+      "\r\n"
+    );
+
+    // Stream HTML response in chunks to avoid String allocation issues
+    client.print("<html><head>");
+    client.print(pageCSS);
+    client.print("</head><body><div class='container'>");
+    client.print("<h1>flock-you</h1>");
+    client.print("<div class='card'><p>Detections: ");
+    client.print(fyDetCount);
+    client.print("</p>");
+    client.print("<p><a class='btn' href='/files'>Browse files</a></p></div>");
+    client.print("<div class='status-bar'>Web server running on <strong>");
+    client.print(gWebServerIP);
+    client.print(":80</strong></div>");
+    client.print("</div></body></html>");
+    client.stop();
   });
 
   // Populate file list cache before starting HTTP server, with source tag.
