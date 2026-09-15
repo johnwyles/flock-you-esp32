@@ -132,8 +132,8 @@ void fyWebServerStart() {
     ".btn-back:hover{background:#444;color:#aaa}"
     "a{color:#00d4ff;text-decoration:none}"
     "a:hover{color:#00ff88;text-decoration:underline}"
-    "table{border-collapse:collapse;margin:15px 0;width:100%;overflow:hidden;border-radius:6px}"
-    "th,td{border:1px solid #333;padding:4px 8px;text-align:left;font-size:13px}"
+    "table{border-collapse:collapse;margin:15px 0;width:100%;overflow:hidden;border-radius:6px;table-layout:fixed}"
+    "th,td{border:1px solid #333;padding:4px 8px;text-align:left;font-size:13px;white-space:nowrap;word-break:break-all;min-width:80px}"
     "th{background:linear-gradient(135deg,#16213e,#0f3460);color:#00d4ff;font-weight:bold}"
     "tr:nth-child(even){background:#16213e}"
     "tr:nth-child(odd){background:#1a1a2e}"
@@ -149,19 +149,50 @@ void fyWebServerStart() {
     bool found = false;
 
     // Use cached file list (populated at web server start)
-    // This avoids slow SD card enumeration during HTTP request handling.
+    // Format: "fname|source|fname|source|..." where source is "SD" or "SPIF"
     if (gFileCache.length() > 0) {
       int idx = 0;
-      while (idx < gFileCache.length()) {
-        int pipe = gFileCache.indexOf('|', idx);
-        if (pipe == -1) break;
-        String fname = gFileCache.substring(idx, pipe);
-        idx = pipe + 1;
-        if (fname.length() == 0) continue;
-        html += "<div class='file-item'><span class='fname'>" + fname + "</span><div>";
-        html += "<a class='btn' href='/file?name=" + fname + "'>JSON</a>";
-        html += "<a class='btn' href='/table?name=" + fname + "'>Table</a></div></div>";
+      int entryIdx = 0;
+      int totalItems = 0;
+      // Count total items first
+      for (int i = 0; i < gFileCache.length(); i++) {
+        if (gFileCache[i] == '|') totalItems++;
+      }
+      totalItems /= 2; // fname|source = 2 pipes per item
+      // Bubble sort by name (simple approach for small lists)
+      String names[32];
+      String sources[32];
+      int count = 0;
+      idx = 0;
+      while (idx < gFileCache.length() && count < 32) {
+        int pipe1 = gFileCache.indexOf('|', idx);
+        if (pipe1 == -1) break;
+        int pipe2 = gFileCache.indexOf('|', pipe1 + 1);
+        if (pipe2 == -1) break;
+        names[count] = gFileCache.substring(idx, pipe1);
+        sources[count] = gFileCache.substring(pipe1 + 1, pipe2);
+        idx = pipe2 + 1;
+        count++;
+      }
+      // Sort by name
+      for (int i = 0; i < count; i++) {
+        for (int j = i + 1; j < count; j++) {
+          if (names[j] < names[i]) {
+            String tn = names[i]; names[i] = names[j]; names[j] = tn;
+            String ts = sources[i]; sources[i] = sources[j]; sources[j] = ts;
+          }
+        }
+      }
+      // Render sorted
+      for (int i = 0; i < count; i++) {
+        String srcLabel = sources[i];
+        if (srcLabel == "SD") srcLabel = "SD Card";
+        else if (srcLabel == "SPIF") srcLabel = "SPIFFS";
+        html += "<div class='file-item'><span class='fname'>" + names[i] + " <span class='status-bar'>(" + srcLabel + ")</span></span><div>";
+        html += "<a class='btn' href='/file?name=" + names[i] + "'>JSON</a>";
+        html += "<a class='btn' href='/table?name=" + names[i] + "'>Table</a></div></div>";
         found = true;
+        entryIdx++;
       }
     }
     // Fallback: enumerate SD card if cache is empty (shouldn't normally happen)
@@ -435,9 +466,8 @@ void fyWebServerStart() {
     gWebServer.send(200, "text/html", html);
   });
 
-  // Populate file list cache before starting HTTP server.
-  // SD enumeration is slow and blocks WiFi — do it once at startup
-  // instead of during HTTP request handling.
+  // Populate file list cache before starting HTTP server, with source tag.
+  // Format: "fname|source|fname|source|..." where source is "SD" or "SPIF"
   gFileCache = "";
   if (gStorageReady) {
     yield();
@@ -450,7 +480,7 @@ void fyWebServerStart() {
           if (fname.startsWith("flock_you-") || fname.startsWith("waypoints-")) {
             if (fname.startsWith("/")) fname = fname.substring(1);
             gFileCache += fname;
-            gFileCache += "|";
+            gFileCache += "|SD|";
           }
         }
         f = root.openNextFile();
@@ -467,7 +497,7 @@ void fyWebServerStart() {
         String fname = f.name();
         if (fname.startsWith("flock_you-") || fname.startsWith("waypoints-")) {
           gFileCache += fname;
-          gFileCache += "|";
+          gFileCache += "|SPIF|";
         }
         f = root.openNextFile();
         yield();
