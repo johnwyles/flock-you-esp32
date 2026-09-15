@@ -54,16 +54,13 @@ void fyWebServerStart() {
   Serial.println("[webserver] BLE scan stopped");
   delay(100);
 #endif
+
+  // Switch WiFi mode from promiscuous (NULL/STANDBY) to station mode.
+  // Use esp_wifi_set_mode() instead of stop/start to avoid tearing down
+  // the WiFi driver and losing ESP-NOW/BLE coex state.
   esp_wifi_set_promiscuous(false);
   delay(100);
-
-  // Stop WiFi driver completely
-  esp_wifi_stop();
-  delay(100);
-
-  // Start the WiFi driver in station mode using ESP-IDF API
   esp_wifi_set_mode(WIFI_MODE_STA);
-  esp_wifi_start();
   delay(100);
 
   // Set WiFi configuration using ESP-IDF (ssid/pass already in fyWsReadConfig)
@@ -101,14 +98,18 @@ void fyWebServerStart() {
     Serial.println("[webserver] WiFi connect failed, aborting");
     mb_wifiStatus = "connect failed";
     // Clean up WiFi before restoring scanning
-    esp_wifi_stop();
-    delay(100);
+    wifi_config_t blankCfg = {};
+    esp_wifi_set_config(WIFI_IF_STA, &blankCfg);
     esp_wifi_set_mode(WIFI_MODE_NULL);
-    esp_wifi_start();
     delay(100);
     // Restore promiscuous mode + channel
     applyInitialChannel();
     esp_wifi_set_promiscuous(true);
+    // Restart BLE coex scan (was stopped in fyWebServerStart)
+#if defined(ENABLE_BLE_SCAN) && ENABLE_BLE_SCAN
+    bleScanStartCoex();
+    delay(100);
+#endif
     return;
   }
 
@@ -508,12 +509,12 @@ void fyWebServerStop() {
   if (!gWebServerActive) return;
   gWebServer.stop();
 
-  // Stop WiFi and restart in null mode for promiscuous scanning.
-  // Use the same ESP-IDF API sequence that setup() used originally.
-  esp_wifi_stop();
-  delay(100);
+  // Switch WiFi back to NULL mode for promiscuous scanning.
+  // Don't call esp_wifi_stop() — that tears down the driver and
+  // causes issues with BLE coex restart. Just change mode.
+  wifi_config_t blankCfg = {};
+  esp_wifi_set_config(WIFI_IF_STA, &blankCfg);
   esp_wifi_set_mode(WIFI_MODE_NULL);
-  esp_wifi_start();
   delay(100);
 
   // Restore promiscuous mode + channel
