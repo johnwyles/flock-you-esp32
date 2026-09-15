@@ -6,14 +6,17 @@
 #include <WiFi.h>
 #include "esp_wifi.h"
 #include "fy_globals.h"
+#include "storage_backend.h"
+#if defined(ENABLE_BLE_SCAN) && ENABLE_BLE_SCAN
+extern void bleScanStop();
+extern void bleScanStartCoex();
+#endif
 
 extern bool mb_showWebLog;
 extern char mb_webLog[120];
 extern unsigned long mb_webLogMs;
 extern const char *mb_wifiStatus;
-#include "storage_backend.h"
 
-// ── Globals from main.cpp (now a separate TU) ─────────────────────────────────
 extern bool fySpiffsReady;
 extern int fyDetCount;
 extern bool gStorageReady;
@@ -43,6 +46,13 @@ void fyWebServerStart() {
 
   // Switch from promiscuous AP-scanning mode to station mode to connect
   // to an existing WiFi network (credentials from .env / build_flags).
+  // CRITICAL: Stop BLE coex scan FIRST — the BLE scanner uses the WiFi
+  // driver and calling esp_wifi_stop() while BLE is active causes a crash.
+#if defined(ENABLE_BLE_SCAN) && ENABLE_BLE_SCAN
+  bleScanStop();
+  Serial.println("[webserver] BLE scan stopped");
+  delay(100);
+#endif
   esp_wifi_set_promiscuous(false);
   delay(100);
 
@@ -136,8 +146,24 @@ void fyWebServerStart() {
     String html = "<html><head>" + String(pageCSS) + "</head><body><div class='container'><h1>flock-you files</h1><div class='card'>";
     bool found = false;
 
-    // List files from SD card if present (with yield to prevent watchdog)
-    if (gStorageReady) {
+    // Use cached file list (populated at web server start)
+    // This avoids slow SD card enumeration during HTTP request handling.
+    if (gFileCache.length() > 0) {
+      int idx = 0;
+      while (idx < gFileCache.length()) {
+        int pipe = gFileCache.indexOf('|', idx);
+        if (pipe == -1) break;
+        String fname = gFileCache.substring(idx, pipe);
+        idx = pipe + 1;
+        if (fname.length() == 0) continue;
+        html += "<div class='file-item'><span class='fname'>" + fname + "</span><div>";
+        html += "<a class='btn' href='/file?name=" + fname + "'>JSON</a>";
+        html += "<a class='btn' href='/table?name=" + fname + "'>Table</a></div></div>";
+        found = true;
+      }
+    }
+    // Fallback: enumerate SD card if cache is empty (shouldn't normally happen)
+    if (!found && gStorageReady) {
       yield();
       File root = SD.open("/");
       if (root) {
@@ -156,54 +182,13 @@ void fyWebServerStart() {
           yield();
         }
         root.close();
-        // Bubble sort by name (files are stored with leading "/" on SD)
-        for (int i = 0; i < count; i++) {
-          for (int j = i + 1; j < count; j++) {
-            if (names[j] < names[i]) {
-              String tmp = names[i];
-              names[i] = names[j];
-              names[j] = tmp;
-            }
-          }
-        }
+        for (int i = 0; i < count; i++) { for (int j = i + 1; j < count; j++) { if (names[j] < names[i]) { String tmp = names[i]; names[i] = names[j]; names[j] = tmp; } } }
         for (int i = 0; i < count; i++) {
           String urlName = names[i];
           if (urlName.startsWith("/")) urlName = urlName.substring(1);
           html += "<div class='file-item'><span class='fname'>" + names[i] + "</span><div>";
           html += "<a class='btn' href='/file?name=" + urlName + "'>JSON</a>";
           html += "<a class='btn' href='/table?name=" + urlName + "'>Table</a></div></div>";
-          found = true;
-        }
-      }
-    }
-    // List files from SPIFFS if available
-    if (fySpiffsReady) {
-      fs::File root = SPIFFS.open("/");
-      if (root) {
-        String names[32];
-        int count = 0;
-        fs::File f = root.openNextFile();
-        while (f && count < 32) {
-          String name = f.name();
-          if (name.startsWith("flock_you-") || name.startsWith("waypoints-")) {
-            names[count++] = name;
-          }
-          f = root.openNextFile();
-        }
-        root.close();
-        for (int i = 0; i < count; i++) {
-          for (int j = i + 1; j < count; j++) {
-            if (names[j] < names[i]) {
-              String tmp = names[i];
-              names[i] = names[j];
-              names[j] = tmp;
-            }
-          }
-        }
-        for (int i = 0; i < count; i++) {
-          html += "<div class='file-item'><span class='fname'>" + names[i] + "</span><div>";
-          html += "<a class='btn' href='/file?name=" + names[i] + "'>JSON</a>";
-          html += "<a class='btn' href='/table?name=" + names[i] + "'>Table</a></div></div>";
           found = true;
         }
       }
@@ -448,7 +433,46 @@ void fyWebServerStart() {
     gWebServer.send(200, "text/html", html);
   });
 
+  // Populate file list cache before starting HTTP server.
+  // SD enumeration is slow and blocks WiFi — do it once at startup
+  // instead of during HTTP request handling.
   gFileCache = "";
+  if (gStorageReady) {
+    yield();
+    File root = SD.open("/");
+    if (root) {
+      File f = root.openNextFile();
+      while (f) {
+        if (!f.isDirectory()) {
+          String fname = f.name();
+          if (fname.startsWith("flock_you-") || fname.startsWith("waypoints-")) {
+            if (fname.startsWith("/")) fname = fname.substring(1);
+            gFileCache += fname;
+            gFileCache += "|";
+          }
+        }
+        f = root.openNextFile();
+        yield();
+      }
+      root.close();
+    }
+  }
+  if (fySpiffsReady) {
+    fs::File root = SPIFFS.open("/");
+    if (root) {
+      fs::File f = root.openNextFile();
+      while (f) {
+        String fname = f.name();
+        if (fname.startsWith("flock_you-") || fname.startsWith("waypoints-")) {
+          gFileCache += fname;
+          gFileCache += "|";
+        }
+        f = root.openNextFile();
+        yield();
+      }
+      root.close();
+    }
+  }
   gFileCacheMs = millis();
 
   gWebServer.begin();
@@ -473,6 +497,12 @@ void fyWebServerStop() {
   // Restore promiscuous mode + channel
   applyInitialChannel();
   esp_wifi_set_promiscuous(true);
+
+  // Restart BLE coex scan (was stopped in fyWebServerStart)
+#if defined(ENABLE_BLE_SCAN) && ENABLE_BLE_SCAN
+  bleScanStartCoex();
+  delay(100);
+#endif
 
   gWebServerActive = false;
   mb_wifiStatus = "disconnected";

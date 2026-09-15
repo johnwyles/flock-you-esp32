@@ -731,14 +731,6 @@ static void bleScanStart()
   g_pBLEScan->start((uint32_t)(BLE_SCAN_DWELL_MS / 1000), (void (*)(NimBLEScanResults)) nullptr, false);
 }
 
-static void bleScanStop()
-{
-  if (!g_pBLEScan)
-    return;
-  if (g_pBLEScan->isScanning())
-    g_pBLEScan->stop();
-}
-
 static void initBLE()
 {
   NimBLEDevice::init("");
@@ -833,6 +825,27 @@ static void bleScanTick(bool & /*promiscPaused*/)
     g_pBLEScan->start(0, (void (*)(NimBLEScanResults)) nullptr);
     Serial.println("[flockyou] BLE coex-scan restarted");
   }
+}
+
+// Stop BLE coex scan (called from fy_webserver.cpp before WiFi shutdown)
+void bleScanStop()
+{
+  if (!g_pBLEScan)
+    return;
+  if (g_pBLEScan->isScanning())
+    g_pBLEScan->stop();
+}
+
+// Restart BLE coex scan (called from fy_webserver.cpp after WiFi restart)
+void bleScanStartCoex()
+{
+  if (!g_pBLEScan)
+    return;
+  if (g_pBLEScan->isScanning())
+    return;
+  g_pBLEScan->clearResults();
+  g_pBLEScan->start(0, (void (*)(NimBLEScanResults)) nullptr);
+  Serial.println("[flockyou] BLE coex-scan restarted (web server exit)");
 }
 
 #else // BLE_COEX_MODE == 0 — original manual pause/resume time-multiplexing

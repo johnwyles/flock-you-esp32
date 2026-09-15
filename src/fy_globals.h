@@ -79,4 +79,6 @@ extern void fySaveSession();
 // ── BLE debugging (defined in main.cpp when BLE enabled) ─────────────────────
 #if defined(ENABLE_BLE_SCAN) && ENABLE_BLE_SCAN
 extern void bleInjectFake();
+extern void bleScanStop();
+extern void bleScanStartCoex();
 #endif
