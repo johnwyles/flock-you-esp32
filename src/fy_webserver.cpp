@@ -294,6 +294,8 @@ void fyWebServerStart() {
   });
 
   // Table view — parse JSON on server and render as HTML table
+  // Uses WiFiClient directly to stream response — avoids WebServer timeout
+  // during slow String-based JSON parsing on marginal WiFi links.
   gWebServer.on("/table", []() {
     String name = gWebServer.arg("name");
     snprintf(mb_webLog, sizeof(mb_webLog), "GET /table?name=%s from %s", name.c_str(), gWebServer.client().remoteIP().toString().c_str());
@@ -320,61 +322,83 @@ void fyWebServerStart() {
       }
     }
 
-    // Send response header + open HTML
-    String resp = "<html><head><title>Table: " + name + "</title>" + String(pageCSS) + "</head><body><div class='container'>";
-    resp += "<h1>Detections: " + name + "</h1>";
-    resp += "<p><a class='btn btn-back' href='/files'>Back to files</a></p>";
+    // Get the WiFi client directly for streaming
+    WiFiClient client = gWebServer.client();
 
     if (body.length() == 0) {
-      resp += "<div class='card'><p>File not found.</p></div>";
-      resp += "</div></body></html>";
-      gWebServer.send(200, "text/html", resp);
+      client.print(
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: text/html\r\n"
+        "Connection: close\r\n"
+        "Access-Control-Allow-Origin: *\r\n"
+        "\r\n"
+      );
+      client.print("<html><head>" + String(pageCSS) + "</head><body><div class='container'>");
+      client.print("<h1>Detections: " + name + "</h1>");
+      client.print("<p><a class='btn btn-back' href='/files'>Back to files</a></p>");
+      client.print("<div class='card'><p>File not found.</p></div>");
+      client.print("</div></body></html>");
+      client.stop();
       return;
     }
+
+    // Send HTTP headers
+    client.print(
+      "HTTP/1.1 200 OK\r\n"
+      "Content-Type: text/html\r\n"
+      "Connection: close\r\n"
+      "Access-Control-Allow-Origin: *\r\n"
+      "\r\n"
+    );
+    // Stream HTML response in chunks to avoid timeout
+    client.print("<html><head><title>Table: ");
+    client.print(name);
+    client.print("</title>" + String(pageCSS) + "</head><body><div class='container'>");
+    client.print("<h1>Detections: " + name + "</h1>");
+    client.print("<p><a class='btn btn-back' href='/files'>Back to files</a></p>");
+    client.flush();
 
     // Parse the JSONL format: line 0 is metadata header, rest are JSON objects
     int start = 0;
     int lineNum = 0;
     int dataRows = 0;
-    String firstLine = "";
-    // Store all data lines in a simple array for two-pass processing
-    const int MAX_ROWS = 50;
-    String dataLines[MAX_ROWS];
-    int numLines = 0;
+    char firstLineBuf[512] = "";
+    int firstLineLen = 0;
 
-    // First pass: collect data lines (skip metadata header)
-    while (start < body.length() && numLines < MAX_ROWS) {
+    // First pass: find columns from first data line
+    while (start < body.length()) {
       int nl = body.indexOf('\n', start);
       if (nl == -1) nl = body.length();
-      String line = body.substring(start, nl);
-      line.trim();
-      start = nl + 1;
-      if (line.length() < 10) continue;
-      // Skip metadata header (line 0 with "v": field)
-      if (lineNum == 0 && line.charAt(0) == '{' && line.indexOf("\"v\":") != -1) {
-        lineNum++;
-        continue;
-      }
-      lineNum++;
-      if (numLines < MAX_ROWS) {
-        dataLines[numLines++] = line;
+      int lineLen = nl - start;
+      if (lineLen >= 10) {
+        // Skip metadata header (line 0 with "v": field)
+        if (lineNum == 0 && body[start] == '{' && body.indexOf("\"v\":", start) < nl) {
+          lineNum++;
+          start = nl + 1;
+          continue;
+        }
+        if (dataRows == 0 && lineLen < (int)sizeof(firstLineBuf) - 1) {
+          body.substring(start, nl).toCharArray(firstLineBuf, sizeof(firstLineBuf));
+          firstLineLen = lineLen;
+        }
         dataRows++;
       }
+      lineNum++;
+      start = nl + 1;
       yield();
     }
 
-    if (numLines == 0) {
-      resp += "<div class='card'><p>No data rows found.</p></div>";
-      resp += "</div></body></html>";
-      gWebServer.send(200, "text/html", resp);
+    if (dataRows == 0 || firstLineLen == 0) {
+      client.print("<div class='card'><p>No data rows found.</p></div>");
+      client.print("<div class='status-bar'>0 rows loaded</div>");
+      client.print("</div></body></html>");
+      client.stop();
       return;
     }
 
-    // Use the first data line to determine column order
-    firstLine = dataLines[0];
-
-    // Open table + header
-    resp += "<table><thead><tr>";
+    // Extract column names from firstLineBuf
+    String firstLine = firstLineBuf;
+    client.print("<table><thead><tr>");
     int p = 0;
     int depth = 0;
     while (p < firstLine.length()) {
@@ -385,7 +409,7 @@ void fyWebServerStart() {
         int q2 = firstLine.indexOf('"', p + 1);
         if (q2 != -1) {
           String key = firstLine.substring(p + 1, q2);
-          resp += "<th>" + key + "</th>";
+          client.print("<th>" + key + "</th>");
           p = q2 + 1;
           int colon = firstLine.indexOf(':', p);
           if (colon != -1) p = colon + 1;
@@ -394,62 +418,75 @@ void fyWebServerStart() {
       }
       p++;
     }
-    resp += "</tr></thead><tbody>";
+    client.print("</tr></thead><tbody>");
+    client.flush();
 
-    // Generate rows
-    for (int i = 0; i < numLines; i++) {
-      resp += "<tr>";
-      String& line = dataLines[i];
-      p = 0;
-      depth = 0;
-      while (p < line.length()) {
-        char c = line.charAt(p);
-        if (c == '{') depth++;
-        else if (c == '}') depth--;
-        if (depth == 1 && c == '"') {
-          int q2 = line.indexOf('"', p + 1);
-          if (q2 != -1) {
-            String key = line.substring(p + 1, q2);
-            // Skip to colon
-            int colon = line.indexOf(':', q2 + 1);
-            if (colon != -1) {
-              p = colon + 1;
-              while (p < line.length() && (line.charAt(p) == ' ' || line.charAt(p) == '\t')) p++;
-              String val = "";
-              if (p < line.length() && line.charAt(p) == '"') {
-                int endQ = line.indexOf('"', p + 1);
-                if (endQ != -1) {
-                  val = line.substring(p + 1, endQ);
-                  val.replace("\\\"", "\"");
-                  val.replace("\\\\", "\\");
+    // Second pass: generate rows
+    start = 0;
+    lineNum = 0;
+    while (start < body.length()) {
+      int nl = body.indexOf('\n', start);
+      if (nl == -1) nl = body.length();
+      int lineLen = nl - start;
+      if (lineLen >= 10) {
+        // Skip metadata header
+        if (lineNum == 0 && body[start] == '{' && body.indexOf("\"v\":", start) < nl) {
+          lineNum++;
+          start = nl + 1;
+          continue;
+        }
+        lineNum++;
+        String line = body.substring(start, nl);
+        client.print("<tr>");
+        p = 0;
+        depth = 0;
+        while (p < line.length()) {
+          char c = line.charAt(p);
+          if (c == '{') depth++;
+          else if (c == '}') depth--;
+          if (depth == 1 && c == '"') {
+            int q2 = line.indexOf('"', p + 1);
+            if (q2 != -1) {
+              int colon = line.indexOf(':', q2 + 1);
+              if (colon != -1) {
+                p = colon + 1;
+                while (p < line.length() && (line.charAt(p) == ' ' || line.charAt(p) == '\t')) p++;
+                String val = "";
+                if (p < line.length() && line.charAt(p) == '"') {
+                  int endQ = line.indexOf('"', p + 1);
+                  if (endQ != -1) {
+                    val = line.substring(p + 1, endQ);
+                    val.replace("\\\"", "\"");
+                    val.replace("\\\\", "\\");
+                  }
+                } else {
+                  int endVal = line.indexOf(',', p);
+                  if (endVal == -1) endVal = line.indexOf('}', p);
+                  if (endVal == -1) endVal = line.indexOf(']', p);
+                  if (endVal == -1) endVal = line.length();
+                  val = line.substring(p, endVal);
+                  val.trim();
                 }
-              } else {
-                int endVal = line.indexOf(',', p);
-                if (endVal == -1) endVal = line.indexOf('}', p);
-                if (endVal == -1) endVal = line.indexOf(']', p);
-                if (endVal == -1) endVal = line.length();
-                val = line.substring(p, endVal);
-                val.trim();
+                val.replace("&", "&amp;");
+                val.replace("<", "&lt;");
+                val.replace(">", "&gt;");
+                client.print("<td>" + val + "</td>");
+                p = q2 + 1;
+                continue;
               }
-              // HTML-escape
-              val.replace("&", "&amp;");
-              val.replace("<", "&lt;");
-              val.replace(">", "&gt;");
-              resp += "<td>" + val + "</td>";
-              p = q2 + 1;
-              continue;
             }
           }
+          p++;
         }
-        p++;
+        client.print("</tr>");
       }
-      resp += "</tr>";
+      start = nl + 1;
       yield();
     }
-    resp += "</tbody></table></div>";
-    resp += "<div class='status-bar'>" + String(dataRows) + " rows loaded</div>";
-    resp += "</div></body></html>";
-    gWebServer.send(200, "text/html", resp);
+    client.print("</tbody></table></div>");
+    client.print("<div class='status-bar'>" + String(dataRows) + " rows loaded</div>");
+    client.print("</div></body></html>");
+    client.stop();
   });
 
   // Root status endpoint
