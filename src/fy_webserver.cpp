@@ -338,8 +338,12 @@ void fyWebServerStart() {
     // Stream HTML response in chunks to avoid timeout
     client.print("<html><head><title>Table: ");
     client.print(name);
-    client.print("</title>" + String(pageCSS) + "</head><body><div class='container'>");
-    client.print("<h1>Detections: " + name + "</h1>");
+    client.print("</title>");
+    client.print(pageCSS);  // include shared CSS
+    client.print("</head><body><div class='container'>");
+    client.print("<h1>Detections: ");
+    client.print(name);
+    client.print("</h1>");
     client.print("<p><a class='btn btn-back' href='/files'>Back to files</a></p>");
     client.flush();
 
@@ -393,18 +397,13 @@ void fyWebServerStart() {
     // Extract first object as a String for column extraction
     String firstObj = body.substring(objStart, objEnd + 1);
 
-    // Send table header
+    // Send table header — extract keys from first object
+    // Uses simple depth tracking (no inStr) — at depth 1, " starts a key name
     client.print("<table><thead><tr>");
     int p = 0;
     depth = 0;
-    inStr = false;
-    escape = false;
     while (p < firstObj.length()) {
       char c = firstObj.charAt(p);
-      if (escape) { escape = false; p++; continue; }
-      if (c == '\\' && inStr) { escape = true; p++; continue; }
-      if (c == '"') { inStr = !inStr; p++; continue; }
-      if (inStr) { p++; continue; }
       if (c == '{') depth++;
       else if (c == '}') depth--;
       if (depth == 1 && c == '"') {
@@ -413,6 +412,9 @@ void fyWebServerStart() {
           String key = firstObj.substring(p + 1, q2);
           client.print("<th>" + key + "</th>");
           p = q2 + 1;
+          // Skip to colon
+          int colon = firstObj.indexOf(':', p);
+          if (colon != -1) p = colon + 1;
           continue;
         }
       }
@@ -455,14 +457,9 @@ void fyWebServerStart() {
       client.print("<tr>");
       p = 0;
       depth = 0;
-      inStr = false;
-      escape = false;
+      // Use simple depth tracking (no inStr) — at depth 1, " starts a value key
       while (p < obj.length()) {
         char c = obj.charAt(p);
-        if (escape) { escape = false; p++; continue; }
-        if (c == '\\' && inStr) { escape = true; p++; continue; }
-        if (c == '"') { inStr = !inStr; p++; continue; }
-        if (inStr) { p++; continue; }
         if (c == '{') depth++;
         else if (c == '}') depth--;
         if (depth == 1 && c == '"') {
@@ -477,8 +474,19 @@ void fyWebServerStart() {
                 int endQ = obj.indexOf('"', p + 1);
                 if (endQ != -1) {
                   val = obj.substring(p + 1, endQ);
-                  val.replace("\\\"", "\"");
-                  val.replace("\\\\", "\\");
+                  // Unescape JSON strings
+                  int si = 0;
+                  while (si < val.length()) {
+                    if (val.charAt(si) == '\\' && si + 1 < val.length()) {
+                      char next = val.charAt(si + 1);
+                      if (next == '"' || next == '\\' || next == '/') {
+                        val.remove(si, 1);
+                      } else if (next == 'n') { val.setCharAt(si, '\n'); val.remove(si + 1, 1); }
+                      else if (next == 't') { val.setCharAt(si, '\t'); val.remove(si + 1, 1); }
+                      else if (next == 'r') { val.setCharAt(si, '\r'); val.remove(si + 1, 1); }
+                    }
+                    si++;
+                  }
                 }
               } else {
                 int endVal = obj.indexOf(',', p);
@@ -488,6 +496,7 @@ void fyWebServerStart() {
                 val = obj.substring(p, endVal);
                 val.trim();
               }
+              // HTML-escape
               val.replace("&", "&amp;");
               val.replace("<", "&lt;");
               val.replace(">", "&gt;");
