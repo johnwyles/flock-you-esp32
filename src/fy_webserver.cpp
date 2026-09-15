@@ -5,7 +5,6 @@
 #include "fy_webserver_config.h"
 #include <WiFi.h>
 #include "esp_wifi.h"
-#include "esp_netif.h"
 #include "fy_globals.h"
 #include "storage_backend.h"
 #if defined(ENABLE_BLE_SCAN) && ENABLE_BLE_SCAN
@@ -55,55 +54,35 @@ void fyWebServerStart() {
   delay(100);
 #endif
 
-  // Switch WiFi mode from promiscuous (NULL/STANDBY) to station mode.
-  // We must NOT call esp_wifi_stop() + esp_wifi_start() here — that tears
-  // down the driver and causes DHCP failures. Instead, use esp_wifi_set_mode()
-  // which transitions gracefully, then connect with ESP-IDF API.
-  esp_wifi_set_promiscuous(false);
-  delay(100);
-  esp_wifi_set_mode(WIFI_MODE_STA);
-  // Channel switch may be needed — set to auto (let WiFi choose)
-  esp_wifi_set_channel(0, WIFI_SECOND_CHAN_NONE);
+  // Use Arduino WiFi library for clean mode transition.
+  // WiFi.begin() handles: mode switch, WiFi start, connection, DHCP.
+  // We must NOT call esp_wifi_stop() — the Arduino WiFi library's
+  // internal state won't recover properly, causing "dhcp client start failed".
+  WiFi.mode(WIFI_MODE_STA);
   delay(100);
 
-  // Set WiFi configuration using ESP-IDF (ssid/pass already in fyWsReadConfig)
-  wifi_config_t sta_cfg = {};
-  strncpy((char*)sta_cfg.sta.ssid, ssid, sizeof(sta_cfg.sta.ssid) - 1);
-  strncpy((char*)sta_cfg.sta.password, pass, sizeof(sta_cfg.sta.password) - 1);
-  sta_cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
-  esp_wifi_set_config(WIFI_IF_STA, &sta_cfg);
-  delay(100);
-
-  // Connect using ESP-IDF — this triggers the connection + DHCP
+  // Connect as a station to the target WiFi network
   Serial.printf("[webserver] Connecting to %s...\n", ssid);
-  esp_wifi_connect();
+  WiFi.begin(ssid, pass);
   unsigned long startMs = millis();
   bool connected = false;
 
-  // Wait for connection + DHCP lease (up to 35 seconds)
-  wifi_ap_record_t ap_info;
-  while (millis() - startMs < 35000) {
+  // Wait for connection + DHCP lease (up to 30 seconds)
+  while (millis() - startMs < 30000) {
     delay(500);
     Serial.printf("[webserver] connecting... %lus\n", (millis() - startMs) / 1000);
-    if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
-      // WiFi connected at the 802.11 layer — wait for DHCP/TCPIP
-      tcpip_adapter_ip_info_t ip_info;
-      if (tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_STA, &ip_info) == 0) {
-        if (ip_info.ip.addr != 0 && ip_info.ip.addr != IPADDR_BROADCAST) {
-          connected = true;
-          break;
-        }
-      }
+    if (WiFi.status() == WL_CONNECTED) {
+      connected = true;
+      break;
     }
   }
 
   if (!connected) {
     Serial.println("[webserver] WiFi connect failed, aborting");
     mb_wifiStatus = "connect failed";
-    // Clean up WiFi before restoring scanning
-    wifi_config_t blankCfg = {};
-    esp_wifi_set_config(WIFI_IF_STA, &blankCfg);
-    esp_wifi_set_mode(WIFI_MODE_NULL);
+    // Clean up: disconnect WiFi, switch back to NULL mode
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_MODE_NULL);
     delay(100);
     // Restore promiscuous mode + channel
     applyInitialChannel();
@@ -116,25 +95,22 @@ void fyWebServerStart() {
     return;
   }
 
-  // WiFi connected — get DHCP-assigned IP using ESP-IDF API
-  tcpip_adapter_ip_info_t ip_info;
-  tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_STA, &ip_info);
-  char ip_str[24];
-  snprintf(ip_str, sizeof(ip_str), "%s", ip4addr_ntoa((const ip4_addr_t*)&ip_info.ip));
-  Serial.printf("[webserver] Connected! IP: %s\n", ip_str);
+  // WiFi connected — get DHCP-assigned IP
+  IPAddress ip = WiFi.localIP();
+  Serial.printf("[webserver] Connected! IP: %s\n", ip.toString().c_str());
 
   mb_wifiStatus = "connected";
-  snprintf(mb_webLog, sizeof(mb_webLog), "SSID: %s\r\nPASS: %s\r\nIP: %s", ssid, pass, ip_str);
+  snprintf(mb_webLog, sizeof(mb_webLog), "SSID: %s\r\nPASS: %s\r\nIP: %s", ssid, pass, ip.toString().c_str());
 
   // Populate public AP info for display
   strncpy(gWebServerSSID, ssid, sizeof(gWebServerSSID) - 1);
   gWebServerSSID[sizeof(gWebServerSSID) - 1] = '\0';
   strncpy(gWebServerPass, pass, sizeof(gWebServerPass) - 1);
   gWebServerPass[sizeof(gWebServerPass) - 1] = '\0';
-  snprintf(gWebServerIP, sizeof(gWebServerIP), "%s", ip_str);
+  snprintf(gWebServerIP, sizeof(gWebServerIP), "%s", ip.toString().c_str());
   mb_showWebLog = true;
   mb_webLogMs = millis();
-  Serial.printf("[webserver] Connected to %s, web server on %s:80\n", ssid, ip_str);
+  Serial.printf("[webserver] Connected to %s, web server on %s:80\n", ssid, ip.toString().c_str());
 
   // File list cache is populated below after WiFi connects.
   gFileCache = "";
@@ -513,11 +489,8 @@ void fyWebServerStop() {
   gWebServer.stop();
 
   // Switch WiFi back to NULL mode for promiscuous scanning.
-  // Don't call esp_wifi_stop() — that tears down the driver and
-  // causes issues with BLE coex restart. Just change mode.
-  wifi_config_t blankCfg = {};
-  esp_wifi_set_config(WIFI_IF_STA, &blankCfg);
-  esp_wifi_set_mode(WIFI_MODE_NULL);
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_MODE_NULL);
   delay(100);
 
   // Restore promiscuous mode + channel
