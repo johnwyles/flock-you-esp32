@@ -231,7 +231,10 @@ void fyWebServerStart() {
   // We must NOT call esp_wifi_stop() — the Arduino WiFi library's
   // internal state won't recover properly, causing "dhcp client start failed".
   WiFi.mode(WIFI_MODE_STA);
-  WiFi.setSleep(false);  // no modem power-save while serving pages
+  // NOTE: do NOT call WiFi.setSleep(false) here. The BLE controller stays
+  // initialised (only the scan is stopped), and ESP-IDF's WiFi/BT coexistence
+  // aborts the chip if modem sleep is disabled while Bluetooth is enabled
+  // ("Should enable WiFi modem sleep when both WiFi and Bluetooth are enabled").
   delay(100);
 
   // Capture WHY the router rejected us (reason code from the disconnect event)
