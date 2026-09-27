@@ -1868,6 +1868,14 @@ void fySaveSession()
     return;
   if (!fyDirty && fyDetCount == fyLastSaveCount)
     return;
+  // Nothing new since boot: fyLastSaveCount holds the count of the file
+  // loaded at boot, but fyDet[] starts empty, so without this check a manual
+  // save right after boot wrote a new, empty session file.
+  if (!fyDirty && fyDetCount == 0)
+  {
+    dualPrintln("[flockyou] save skipped: no new detections since boot");
+    return;
+  }
   // Bump the sequence number so each save creates a new file.
   fySessionSeq++;
   size_t payloadBytes = 0;
@@ -2921,13 +2929,18 @@ void loop()
     uint8_t btn = uiTakeButtonAction();
     if (btn == 1)
     {
-      fySaveSession();
       Serial.println("[flockyou] Manual save (button)");
+      fySaveSession();
     }
-    else if (btn == 2 && gHasGPS)
+    else if (btn == 2)
     {
-      waypointRecord("manual");
-      Serial.println("[flockyou] Waypoint recorded (button)");
+      if (!gHasGPS)
+        dualPrintln("[flockyou] Waypoint: no GPS module detected");
+      else if (waypointRecord("manual"))
+        dualPrintln("[flockyou] Waypoint recorded (button)");
+      else
+        dualPrintf("[flockyou] Waypoint NOT saved: no GPS fix yet (%u sats used, %u in view)\n",
+                   gCurrentFix.satellites, gGpsStats.satsInView);
     }
     else if (btn == 3)
     {

@@ -708,7 +708,8 @@ static int m5basicButtonTick() {
     if (M5.BtnB.isPressed()) {
         if (!btnBLatched) {
             btnBLatched = true;
-            waypointRecordManual("manual");
+            // Waypoint is recorded by loop() on action 2 (single call, on the
+            // task that owns SD writes); recording here too made duplicates.
             return 2;
         }
     } else { btnBLatched = false; }
