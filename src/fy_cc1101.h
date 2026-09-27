@@ -1,5 +1,5 @@
 // flock-you-esp32 — CC1101 sub-GHz support
-// M5Stack CC1101 Module (315/433/868/915 MHz) via GROVE Port A
+// M5Stack Module CC1101 (M-Bus stacking module)
 
 #ifndef FY_CC1101_H
 #define FY_CC1101_H
@@ -7,9 +7,12 @@
 #include <Arduino.h>
 #include <SPI.h>
 
-// CC1101 SPI pins (shared SPI bus with LoRa on Port B)
-// LoRa: SCK=18, MISO=19, MOSI=23, CS=5
-// CC1101: SCK=18, MISO=19, MOSI=23, CS=4 (different CS avoids conflict)
+// CC1101 SPI pins. SCK/MISO/MOSI are fixed on the M-Bus (G18/G19/G23, shared
+// with the SD card and LCD). CSn is selected by the Module CC1101 DIP switch
+// and on M5Stack Basic can only be G15, G25, G0 or G12 (M-Bus pins 23/8/24/21)
+// -- NOT G4, which is the Basic's SD-card CS. fy_module_diag.cpp probes all of
+// them and passes the one that answers to cc1101Init(). CC1101_CS below is
+// only the legacy fallback default.
 #define CC1101_CS   4
 #define CC1101_MOSI 23
 #define CC1101_MISO 19

@@ -7,6 +7,7 @@
 #include "esp_wifi.h"
 #include "fy_globals.h"
 #include "storage_backend.h"
+#include "fy_module_diag.h"
 #if defined(ENABLE_BLE_SCAN) && ENABLE_BLE_SCAN
 extern void bleScanStop();
 extern void bleScanStartCoex();
@@ -616,11 +617,20 @@ void fyWebServerStart() {
     client.print(fyDetCount);
     client.print("</p>");
     client.print("<p><a class='btn' href='/files'>Browse files</a></p></div>");
+    fyDiagPrintHtml(client);
     client.print("<div class='status-bar'>Web server running on <strong>");
     client.print(gWebServerIP);
     client.print(":80</strong></div>");
     client.print("</div></body></html>");
     client.stop();
+  });
+
+  // Optional-module diagnostics (GPS / CC1101) as JSON
+  gWebServer.on("/modules", []() {
+    static char json[3072];
+    fyDiagJson(json, sizeof(json));
+    gWebServer.sendHeader("Access-Control-Allow-Origin", "*");
+    gWebServer.send(200, "application/json", json);
   });
 
   // Populate file list cache before starting HTTP server, with source tag.

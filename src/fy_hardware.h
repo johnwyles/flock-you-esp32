@@ -1,4 +1,4 @@
-// flock-you-esp32 — Hardware detection for GPS, LoRa, CC1101
+// flock-you-esp32 — Hardware detection for LoRa (GPS/CC1101: fy_module_diag.cpp)
 // Disables features automatically when modules are absent.
 
 #ifndef FY_HARDWARE_H
@@ -27,30 +27,8 @@ static bool detect_lora(uint8_t cs_pin = 5, uint8_t rst_pin = 26, uint8_t dio0_p
   return (ver == 0x12);
 }
 
-// ── CC1101 detection (SPI + PARTNUM read) ────────────────────────────────────
-// CC1101 PARTNUM register (0x30) reads back 0x00 on real hardware.
-static bool detect_cc1101(SPIClass &spi = SPI, uint8_t cs = 4) {
-  spi.begin();
-  pinMode(cs, OUTPUT);
-  digitalWrite(cs, HIGH);
-  delay(1);
-  digitalWrite(cs, LOW);
-  spi.transfer(0x30 | 0x80);
-  uint8_t part = spi.transfer(0x00);
-  digitalWrite(cs, HIGH);
-  return (part == 0x00);
-}
-
-// ── GPS detection (I2C scan) ─────────────────────────────────────────────────
-static bool detect_gps(TwoWire &bus = Wire, uint8_t sda = 21, uint8_t scl = 22) {
-  bus.begin(sda, scl);
-  delay(10);
-  const uint8_t addrs[] = {0x10, 0x42, 0x66, 0x08};
-  for (uint8_t i = 0; i < sizeof(addrs); i++) {
-    bus.beginTransmission(addrs[i]);
-    if (bus.endTransmission() == 0) return true;
-  }
-  return false;
-}
+// GPS and CC1101 detection moved to fy_module_diag.cpp: the M5Stack GPS
+// Module v2.1 is UART (not I2C), and the CC1101's CSn/GDO pins are DIP-switch
+// selectable, so both need a multi-pin probe rather than a single fixed check.
 
 #endif /* FY_HARDWARE_H */

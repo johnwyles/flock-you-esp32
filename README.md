@@ -9,11 +9,13 @@ ESP32 firmware for M5Stack Basic Development Kit with hardware detection for GPS
 **Optional modules (auto-detected at boot):**
 | Module | Interface | Port | Pins |
 |--------|-----------|------|------|
-| GPS Unit v1.1 (AT6668) | I2C | Port A | SDA=21, SCL=22, addr 0x10 |
+| GPS Module v2.1 (AT6668 + MAX2659) | UART 115200 | M-Bus (stacked) | GNSS_TX DIP -> **G16** recommended (also probes G13/G35/G34); GPS Unit v1.1 on Port C also works (G16) |
 | LoRa Module 433MHz (SX1278/RA-02) | SPI | Port B | CS=5, RST=26, DIO0=2, SCK=18, MISO=19, MOSI=23 |
-| CC1101 Module (315/433/868/915 MHz) | SPI | Port B | CS=4, GDO0=0, SCK=18, MISO=19, MOSI=23 |
+| Module CC1101 | SPI | M-Bus (stacked) | CSn DIP -> **G15** recommended (also probes G0/G12/G25); GDO0/GDO2 DIP -> G35/G5/G13; SCK=18, MISO=19, MOSI=23 |
 
-**Module conflict:** LoRa and CC1101 share SPI bus (SCK/MISO/MOSI) with different CS pins (5 vs 4). Both can be present simultaneously.
+**DIP switches:** both stacked modules route their signals through DIP switches, so turn ON exactly one switch per signal. On the Basic avoid G12 (boot strapping pin), avoid G25 for CC1101 CSn (speaker DAC), and never put the GPS GNSS_TX on G3 (that is the USB serial console RX).
+
+**Module diagnostics:** at boot the firmware probes every pin the DIP switches can select and prints a `[diag]` report on the serial console (115200). The same report is on the web server's `/` page and as JSON at `/modules`. Serial commands: `CMD:DIAG` (re-probe), `CMD:MODULES` (report + live GPS stats), `CMD:NMEA` (echo raw GPS output for 5 s).
 
 ## Features
 

@@ -11,11 +11,16 @@
 //   CMD:FAKE_WEATHER / CMD:FAKE_GPS / CMD:FAKE_LORA
 //   CMD:CLEAR    — clear all detections
 //   CMD:SAVE     — manually persist session
+//   CMD:DIAG     — re-probe GPS + CC1101 and print the module report
+//   CMD:MODULES  — print the last module report + live GPS stats (no re-probe)
+//   CMD:NMEA     — echo raw GPS bytes to the console for 5 seconds
 
 #include <Arduino.h>
 #include "fy_globals.h"
 #include "fy_gps.h"
 #include "fy_cc1101.h"
+#include "fy_module_diag.h"
+#include "storage_backend.h"
 #include "fy_webserver.h"
 #include "fy_serial.h"
 
@@ -28,6 +33,17 @@ void fySerialProcess()
 
   String cmd = Serial.readStringUntil('\n');
   cmd.trim();
+
+  // A GPS whose DIP switch routes GNSS_TX to G3 (M-Bus 13) talks straight
+  // into the USB console RX, so its NMEA shows up here as "commands".
+  if (cmd.startsWith("$G") || cmd.startsWith("$B")) {
+    static uint32_t nmeaOnConsole = 0;
+    if ((nmeaOnConsole++ % 50) == 0) {
+      Serial.println("[diag] NMEA text is arriving on the USB console RX (G3). The GPS "
+                     "module's GNSS_TX DIP switch is on G3/MBus13 -- move it to G16/MBus15.");
+    }
+    return;
+  }
 
   if (cmd.equalsIgnoreCase("CMD:HELP")) {
     Serial.println("[flockyou] Commands:");
@@ -46,6 +62,9 @@ void fySerialProcess()
     Serial.println("  CMD:CLEAR    — clear all detections");
     Serial.println("  CMD:SAVE     — manually save session now");
     Serial.println("  CMD:DEBUG    — toggle debug verbosity");
+    Serial.println("  CMD:DIAG     — re-probe GPS + CC1101 and print module report");
+    Serial.println("  CMD:MODULES  — print module report + live GPS stats");
+    Serial.println("  CMD:NMEA     — echo raw GPS output for 5 seconds");
 
   } else if (cmd.equalsIgnoreCase("CMD:INFO")) {
     Serial.println("[flockyou] === Device Info ===");
@@ -79,12 +98,50 @@ void fySerialProcess()
                   gHasGPS ? "yes" : "no",
                   gHasLoRa ? "yes" : "no",
                   gHasCC1101 ? "yes" : "no");
+    if (gHasGPS)
+      Serial.printf("[flockyou] GPS: %lu NMEA ok, fixQ=%u, sats=%u, fix=%s\n",
+                    (unsigned long)gGpsStats.sentences, gGpsStats.fixQuality,
+                    gCurrentFix.satellites, gCurrentFix.valid ? "yes" : "no");
 #if defined(ENABLE_BLE_SCAN) && ENABLE_BLE_SCAN
     Serial.println("[flockyou] BLE: enabled");
 #else
     Serial.println("[flockyou] BLE: disabled");
 #endif
     Serial.printf("[flockyou] Free heap: %d bytes\n", ESP.getFreeHeap());
+
+  } else if (cmd.equalsIgnoreCase("CMD:MODULES")) {
+    fyDiagPrint(Serial);
+
+  } else if (cmd.equalsIgnoreCase("CMD:DIAG")) {
+    gHasGPS = fyDiagProbeGps();
+    if (gHasGPS) {
+      if (gGpsDiag.transport == GPS_TRANSPORT_UART)
+        gpsInitUart(Serial2, gGpsDiag.rxPin, -1, gGpsDiag.baud);
+      else
+        gpsInit(Wire, 21, 22, gGpsDiag.i2cAddr);
+    }
+    // SD shares the SPI bus; only skip legacy G4 when the SD card is mounted.
+    gHasCC1101 = fyDiagProbeCc1101(gStorageReady && gStorageChoice == StorageChoice::Sd, gHasLoRa);
+    if (gHasCC1101) cc1101Init(SPI, (uint8_t)gCc1101Diag.csPin);
+    fyDiagPrint(Serial);
+
+  } else if (cmd.equalsIgnoreCase("CMD:NMEA")) {
+    if (gGpsStats.transport != GPS_TRANSPORT_UART) {
+      Serial.println("[diag] GPS UART not active (run CMD:DIAG first)");
+    } else {
+      Serial.printf("[diag] raw GPS output from %s @ %lu for 5 s:\n",
+                    fyDiagPinLabel(gGpsStats.rxPin), (unsigned long)gGpsStats.baud);
+      unsigned long start = millis();
+      while (millis() - start < 5000) {
+        while (Serial2.available()) {
+          char c = (char)Serial2.read();
+          gpsFeedChar(c);
+          Serial.write(c);
+        }
+        delay(2);
+      }
+      Serial.println("\n[diag] end of raw GPS output");
+    }
 
   } else if (cmd.equalsIgnoreCase("CMD:WEB")) {
     if (gWebServerMode) {

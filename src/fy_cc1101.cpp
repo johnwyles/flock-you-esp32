@@ -1,5 +1,6 @@
 // flock-you-esp32 — CC1101 sub-GHz support
-// M5Stack CC1101 Module (315/433/868/915 MHz) via GROVE Port B
+// M5Stack Module CC1101 (M-Bus stacking module, SPI on G18/G19/G23;
+// CSn/GDO pins chosen by the module's DIP switches — see fy_module_diag.cpp)
 
 #include "fy_cc1101.h"
 
@@ -26,42 +27,74 @@ static SPIClass *gSpi = nullptr;
 static uint8_t gCs = CC1101_CS;
 static uint8_t gCurrentBand = CC1101_BAND_433;
 static bool gDetected = false;
+static const SPISettings kCcSpi(1000000, MSBFIRST, SPI_MODE0);
 
 // SPI transfer helpers
 static uint8_t spiTransfer(uint8_t val) {
   return gSpi->transfer(val);
 }
 
+// Wait for CHIP_RDYn (SO/MISO goes low after CSn is pulled low).
+static bool cc1101WaitMisoLow(uint32_t timeoutUs = 2000) {
+  uint32_t start = micros();
+  while (digitalRead(CC1101_MISO)) {
+    if (micros() - start > timeoutUs) return false;
+  }
+  return true;
+}
+
+static void csLow()  { gSpi->beginTransaction(kCcSpi); digitalWrite(gCs, LOW); cc1101WaitMisoLow(); }
+static void csHigh() { digitalWrite(gCs, HIGH); gSpi->endTransaction(); }
+
+// Registers 0x30-0x3D are STATUS registers: they are only reachable with the
+// burst bit set (0xC0). A plain read (0x80) of 0x30-0x3D is interpreted as a
+// COMMAND STROBE (e.g. 0xB0 = SRES), which is why PARTNUM/VERSION never
+// read back correctly before.
 static uint8_t cc1101ReadReg(uint8_t reg) {
-  digitalWrite(gCs, LOW);
-  spiTransfer(reg | 0x80);
+  uint8_t hdr = (reg >= 0x30 && reg <= 0x3D) ? (reg | 0xC0) : (reg | 0x80);
+  csLow();
+  spiTransfer(hdr);
   uint8_t val = spiTransfer(0x00);
-  digitalWrite(gCs, HIGH);
+  csHigh();
   return val;
 }
 
 static void cc1101WriteReg(uint8_t reg, uint8_t val) {
-  digitalWrite(gCs, LOW);
+  csLow();
   spiTransfer(reg);
   spiTransfer(val);
-  digitalWrite(gCs, HIGH);
+  csHigh();
 }
 
 static void cc1101WriteStrobe(uint8_t cmd) {
-  digitalWrite(gCs, LOW);
+  csLow();
   spiTransfer(cmd);
-  digitalWrite(gCs, HIGH);
+  csHigh();
 }
 
+// Presence check: PARTNUM must be 0x00, and a write/read-back of a
+// read/write config register (SYNC1) must round-trip. VERSION is reported
+// but not required to be 0x14 (genuine parts read 0x14, some clones 0x04/0x17).
 bool cc1101Detect(SPIClass &spi, uint8_t cs) {
   gSpi = &spi;
   gCs = cs;
   digitalWrite(gCs, HIGH);
   pinMode(gCs, OUTPUT);
-  delay(10);
+  delay(1);
   uint8_t partnum = cc1101ReadReg(CC1101_PARTNUM);
   uint8_t version = cc1101ReadReg(CC1101_VERSION);
-  return (partnum == 0x00 && version == 0x14);
+  uint8_t saved = cc1101ReadReg(CC1101_SYNC1);
+  cc1101WriteReg(CC1101_SYNC1, 0xA5);
+  uint8_t rb1 = cc1101ReadReg(CC1101_SYNC1);
+  cc1101WriteReg(CC1101_SYNC1, 0x5A);
+  uint8_t rb2 = cc1101ReadReg(CC1101_SYNC1);
+  cc1101WriteReg(CC1101_SYNC1, saved);
+  bool ok = (partnum == 0x00) && rb1 == 0xA5 && rb2 == 0x5A &&
+            version != 0x00 && version != 0xFF;
+  Serial.printf("[cc1101] detect CS=G%u: PARTNUM=0x%02X VERSION=0x%02X "
+                "SYNC1 rw=0x%02X/0x%02X -> %s\n",
+                cs, partnum, version, rb1, rb2, ok ? "PRESENT" : "not found");
+  return ok;
 }
 
 void cc1101Init(SPIClass &spi, uint8_t cs) {
@@ -69,7 +102,7 @@ void cc1101Init(SPIClass &spi, uint8_t cs) {
   gCs = cs;
   digitalWrite(gCs, HIGH);
   pinMode(gCs, OUTPUT);
-  delay(10);
+  delay(1);
   // Reset
   cc1101WriteStrobe(CC1101_SRES);
   delay(10);
@@ -105,20 +138,22 @@ void cc1101Rx() {
 
 bool cc1101ReadPacket(SubGHzDetection &det) {
   if (!gDetected) return false;
-  uint8_t status = cc1101ReadReg(CC1101_PKTSTATUS);
-  if (!(status & 0x01)) return false; // not RX ready
-  uint8_t rxbytes = cc1101ReadReg(CC1101_RXBYTES);
+  uint8_t rxbytes = cc1101ReadReg(CC1101_RXBYTES) & 0x7F;  // bit7 = overflow
   if (rxbytes == 0) return false;
   // Read FIFO
-  digitalWrite(gCs, LOW);
-  spiTransfer(0x3F | 0x80); // burst read RX FIFO
+  csLow();
+  spiTransfer(0x3F | 0xC0); // burst read RX FIFO
   det.length = spiTransfer(0x00);
   if (det.length > 64) det.length = 64;
   for (int i = 0; i < det.length; i++) {
     det.data[i] = spiTransfer(0x00);
   }
-  digitalWrite(gCs, HIGH);
-  det.rssi = cc1101ReadReg(CC1101_RSSI);
+  csHigh();
+  {
+    // RSSI register is two's complement, 0.5 dB steps, 74 dB offset (datasheet 17.3)
+    int raw = (int8_t)cc1101ReadReg(CC1101_RSSI);
+    det.rssi = (int8_t)(raw / 2 - 74);
+  }
   det.timestampMs = millis();
   det.band = gCurrentBand;
   det.sigType = cc1101Classify(det.data, det.length, det.band);

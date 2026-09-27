@@ -69,6 +69,7 @@
 #include "fy_sd_storage.h"
 #include "fy_gps.h"
 #include "fy_cc1101.h"
+#include "fy_module_diag.h"
 #include "fy_webserver.h"
 #include "fy_hardware.h"
 #include "fy_serial.h"
@@ -2652,30 +2653,44 @@ void setup() {
   esp_log_level_set("SPIFFS", ESP_LOG_WARN);
 
   // Hardware auto-detection for optional GPS + LoRa + CC1101 modules.
-  // MUST come AFTER storage selection: detect_cc1101(SPI, 4) grabs GPIO4
-  // which is the same pin as the SD card CS on M5Stack Basic. If CC1101
-  // detection runs first, it will claim GPIO4 and prevent SD.begin(4) from
-  // working. So we detect CC1101 only when the SD card is NOT present.
-  gHasGPS = detect_gps(Wire, 21, 22);
+  // MUST come AFTER storage selection: the SD card (CS=G4) shares the SPI bus
+  // with the CC1101, so SD must already be mounted before we start toggling
+  // candidate CSn pins. fy_module_diag.cpp does the actual probing and prints
+  // a detailed per-pin report; see CMD:DIAG to re-run it later.
+  dualPrintln("[flockyou] Probing optional modules (GPS, LoRa, CC1101)...");
   gHasLoRa = detect_lora(5, 26, 2);
-  if (gHasGPS) {
-    dualPrintln("[flockyou] GPS module detected on I2C (0x10/0x42)");
-    gpsInit(Wire, 21, 22);
-  }
   if (gHasLoRa) dualPrintln("[flockyou] LoRa module (SX127x) detected on SPI");
 
-  // Detect CC1101 only when SD card slot is NOT in use (GPIO4 conflict).
-  // The storage boot menu's sdPresent() already ran SD.begin(4) if a card
-  // was present — if it failed, GPIO4 is free for CC1101.
-  gHasCC1101 = false;
-  if (!gStorageReady || gStorageChoice != StorageChoice::Sd)
-  {
-    gHasCC1101 = detect_cc1101(SPI, 4);
-    if (gHasCC1101) {
-      dualPrintln("[flockyou] CC1101 sub-GHz detected (315/433/868/915 MHz)");
-      cc1101Init(SPI, 4);
+  gHasGPS = fyDiagProbeGps();
+  if (gHasGPS) {
+    if (gGpsDiag.transport == GPS_TRANSPORT_UART) {
+      gpsInitUart(Serial2, gGpsDiag.rxPin, -1, gGpsDiag.baud);
+      dualPrintf("[flockyou] GPS detected: UART RX=%s @ %lu\n",
+                 fyDiagPinLabel(gGpsDiag.rxPin), (unsigned long)gGpsDiag.baud);
+    } else {
+      gpsInit(Wire, 21, 22, gGpsDiag.i2cAddr);
+      dualPrintf("[flockyou] GPS detected: I2C 0x%02X\n", gGpsDiag.i2cAddr);
     }
+  } else {
+    dualPrintln("[flockyou] GPS NOT detected (see [diag] lines / CMD:DIAG)");
   }
+
+  bool sdInUse = gStorageReady && gStorageChoice == StorageChoice::Sd;
+  gHasCC1101 = fyDiagProbeCc1101(sdInUse, gHasLoRa);
+  if (gHasCC1101) {
+    dualPrintf("[flockyou] CC1101 detected: CSn=%s ver=0x%02X\n",
+               fyDiagPinLabel(gCc1101Diag.csPin), gCc1101Diag.version);
+    cc1101Init(SPI, (uint8_t)gCc1101Diag.csPin);
+  } else {
+    dualPrintln("[flockyou] CC1101 NOT detected (see [diag] lines / CMD:DIAG)");
+  }
+  // The CC1101 probe may have repurposed G25 (speaker DAC) as a GPIO while
+  // trying it as CSn; re-init the speaker so alerts still sound.
+  if (gCc1101Diag.csPin != 25 && M5.Speaker.isRunning()) {
+    M5.Speaker.end();
+    M5.Speaker.begin();
+  }
+  fyDiagPrint(Serial);
   dualPrintln("[flockyou] Btn C short=det list, long=web server toggle");
 
   m5basicScanning(currentChannel, channelModeName(), 0,
