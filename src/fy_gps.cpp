@@ -66,7 +66,7 @@ void gpsInit(TwoWire &bus, uint8_t sda, uint8_t scl, uint8_t addr) {
   gGpsStats.i2cAddr = addr;
   gGpsStats.rxPin = -1;
   gGpsStats.baud = 0;
-  Serial.printf("[gps] init on I2C SDA=%d SCL=%d addr=0x%02X\n", sda, scl, addr);
+  Serial.printf("[gps] init on I2C SDA=%d SCL=%d addr=0x%02X\r\n", sda, scl, addr);
 }
 
 void gpsInitUart(HardwareSerial &port, int8_t rxPin, int8_t txPin, uint32_t baud) {
@@ -80,7 +80,7 @@ void gpsInitUart(HardwareSerial &port, int8_t rxPin, int8_t txPin, uint32_t baud
   gGpsStats.rxPin = rxPin;
   gGpsStats.baud = baud;
   gGpsStats.i2cAddr = 0;
-  Serial.printf("[gps] init on UART RX=G%d TX=%s%d @ %lu baud\n", rxPin,
+  Serial.printf("[gps] init on UART RX=G%d TX=%s%d @ %lu baud\r\n", rxPin,
                 txPin >= 0 ? "G" : "", txPin, (unsigned long)baud);
 }
 
@@ -296,7 +296,7 @@ bool waypointRecordManual(const char *label) {
            gCurrentFix.lat, gCurrentFix.lon, gCurrentFix.alt,
            gCurrentFix.satellites, gCurrentFix.hdop);
   if (waypointWriteFile(path, entry)) {
-    Serial.printf("[gps] waypoint saved: %s (%.6f, %.6f)\n", label, gCurrentFix.lat, gCurrentFix.lon);
+    Serial.printf("[gps] waypoint saved: %s (%.6f, %.6f)\r\n", label, gCurrentFix.lat, gCurrentFix.lon);
     return true;
   }
   Serial.println("[gps] waypoint save FAILED");

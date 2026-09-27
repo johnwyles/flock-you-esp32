@@ -90,21 +90,21 @@ void fySerialProcess()
 #else
     Serial.println("[flockyou] Board: generic ESP32");
 #endif
-    Serial.printf("[flockyou] CPU freq: %d MHz\n", (int)ESP.getCpuFreqMHz());
-    Serial.printf("[flockyou] Free heap: %d bytes\n", ESP.getFreeHeap());
-    Serial.printf("[flockyou] Flash size: %d MB\n", (int)(ESP.getFlashChipSize() / (1024 * 1024)));
-    Serial.printf("[flockyou] WiFi channel: %d\n", currentChannel);
-    Serial.printf("[flockyou] Scan mode: %s\n", channelModeName());
-    Serial.printf("[flockyou] Web server: %s\n", fyWebServerActive() ? "ON" : "OFF");
+    Serial.printf("[flockyou] CPU freq: %d MHz\r\n", (int)ESP.getCpuFreqMHz());
+    Serial.printf("[flockyou] Free heap: %d bytes\r\n", ESP.getFreeHeap());
+    Serial.printf("[flockyou] Flash size: %d MB\r\n", (int)(ESP.getFlashChipSize() / (1024 * 1024)));
+    Serial.printf("[flockyou] WiFi channel: %d\r\n", currentChannel);
+    Serial.printf("[flockyou] Scan mode: %s\r\n", channelModeName());
+    Serial.printf("[flockyou] Web server: %s\r\n", fyWebServerActive() ? "ON" : "OFF");
 
   } else if (cmd.equalsIgnoreCase("CMD:STATUS")) {
-    Serial.printf("[flockyou] Detections: %d/%d\n", fyDetCount, MAX_DETECTIONS);
-    Serial.printf("[flockyou] GPS: %s, LoRa: %s, CC1101: %s\n",
+    Serial.printf("[flockyou] Detections: %d/%d\r\n", fyDetCount, MAX_DETECTIONS);
+    Serial.printf("[flockyou] GPS: %s, LoRa: %s, CC1101: %s\r\n",
                   gHasGPS ? "yes" : "no",
                   gHasLoRa ? "yes" : "no",
                   gHasCC1101 ? "yes" : "no");
     if (gHasGPS)
-      Serial.printf("[flockyou] GPS: %lu NMEA ok, fixQ=%u, sats=%u, fix=%s\n",
+      Serial.printf("[flockyou] GPS: %lu NMEA ok, fixQ=%u, sats=%u, fix=%s\r\n",
                     (unsigned long)gGpsStats.sentences, gGpsStats.fixQuality,
                     gCurrentFix.satellites, gCurrentFix.valid ? "yes" : "no");
 #if defined(ENABLE_BLE_SCAN) && ENABLE_BLE_SCAN
@@ -112,7 +112,7 @@ void fySerialProcess()
 #else
     Serial.println("[flockyou] BLE: disabled");
 #endif
-    Serial.printf("[flockyou] Free heap: %d bytes\n", ESP.getFreeHeap());
+    Serial.printf("[flockyou] Free heap: %d bytes\r\n", ESP.getFreeHeap());
 
   } else if (cmd.equalsIgnoreCase("CMD:MODULES")) {
     fyDiagPrint(Serial);
@@ -135,7 +135,7 @@ void fySerialProcess()
     if (gGpsStats.transport != GPS_TRANSPORT_UART) {
       Serial.println("[diag] GPS UART not active (run CMD:DIAG first)");
     } else {
-      Serial.printf("[diag] raw GPS output from %s @ %lu for 5 s:\n",
+      Serial.printf("[diag] raw GPS output from %s @ %lu for 5 s:\r\n",
                     fyDiagPinLabel(gGpsStats.rxPin), (unsigned long)gGpsStats.baud);
       unsigned long start = millis();
       while (millis() - start < 5000) {
@@ -262,9 +262,9 @@ void fySerialProcess()
 
   } else if (cmd.equalsIgnoreCase("CMD:DEBUG")) {
     gDebugLevel = (gDebugLevel + 1) % 3;
-    Serial.printf("[flockyou] Debug level: %d (0=off, 1=normal, 2=verbose)\n", gDebugLevel);
+    Serial.printf("[flockyou] Debug level: %d (0=off, 1=normal, 2=verbose)\r\n", gDebugLevel);
 
   } else if (!cmd.isEmpty()) {
-    Serial.printf("[flockyou] Unknown command: %s (type CMD:HELP for list)\n", cmd.c_str());
+    Serial.printf("[flockyou] Unknown command: %s (type CMD:HELP for list)\r\n", cmd.c_str());
   }
 }

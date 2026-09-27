@@ -92,11 +92,11 @@ static void bleSelfTestRandomizeAddr() {
       NimBLEDevice::setOwnAddrType(BLE_OWN_ADDR_RANDOM);
     } else {
       Serial.printf("[flockyou] BLE self-test: ble_hs_id_set_rnd FAILED rc=%d -- "
-                    "keeping public address\n", rc2);
+                    "keeping public address\r\n", rc2);
     }
   } else {
     Serial.printf("[flockyou] BLE self-test: ble_hs_id_gen_rnd FAILED rc=%d -- "
-                  "keeping public address\n", rc);
+                  "keeping public address\r\n", rc);
   }
 }
 
@@ -148,7 +148,7 @@ static void bleSelfTestFire(NimBLEAdvertising* adv, uint8_t scenario) {
 
   bleSelfTestRandomizeAddr();
 
-  Serial.printf("[flockyou] BLE self-test: advertising %s scenario (addr=%s)...\n",
+  Serial.printf("[flockyou] BLE self-test: advertising %s scenario (addr=%s)...\r\n",
                 label, NimBLEDevice::getAddress().toString().c_str());
 
   adv->setAdvertisementData(data);

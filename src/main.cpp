@@ -684,7 +684,7 @@ static void fyProcessBLEAdvertisedDevice(NimBLEAdvertisedDevice *adv)
 
     // Log immediately from BLE task — Serial is safe here because we're not
     // in the WiFi promiscuous callback (different task context).
-    Serial.printf("[flockyou] BLE-Flock rssi=%d addr=%s\n",
+    Serial.printf("[flockyou] BLE-Flock rssi=%d addr=%s\r\n",
                   (int)rssi, adv->getAddress().toString().c_str());
   }
 }
@@ -1075,7 +1075,19 @@ static void dualPrintf(const char *fmt, ...)
   va_end(args);
   if (n > 0)
   {
-    Serial.write(_dualBuf, n);
+    // Terminals that don't translate LF (screen, minicom, many web serial
+    // consoles) stair-step and cut off lines ending in a bare '\n'; send
+    // CRLF instead so every line starts at column 0.
+    if (n >= (int)sizeof(_dualBuf)) n = sizeof(_dualBuf) - 1;
+    if (_dualBuf[n - 1] == '\n' && (n < 2 || _dualBuf[n - 2] != '\r'))
+    {
+      Serial.write(_dualBuf, n - 1);
+      Serial.write("\r\n", 2);
+    }
+    else
+    {
+      Serial.write(_dualBuf, n);
+    }
 #if MIRROR_SERIAL && !defined(USE_M5ATOM_VOICES3R)
     Serial1.write(_dualBuf, n);
 #endif
@@ -3003,7 +3015,7 @@ void loop()
       // connect used to leave gWebServerMode=true with scanning paused).
       gWebServerMode = fyWebServerActive();
       uiFlushButtonActions();
-      Serial.printf("[flockyou] Web server: %s\n", gWebServerMode ? "ON" : "OFF");
+      Serial.printf("[flockyou] Web server: %s\r\n", gWebServerMode ? "ON" : "OFF");
     }
   }
 #endif
@@ -3057,7 +3069,7 @@ void loop()
     currentChannel = customChannels[customChannelIndex];
     esp_wifi_set_channel(currentChannel, WIFI_SECOND_CHAN_NONE);
     lastHop = millis();
-    Serial.printf("[flockyou] Manual save + ch hop -> %u (button)\n", currentChannel);
+    Serial.printf("[flockyou] Manual save + ch hop -> %u (button)\r\n", currentChannel);
 #if USE_BUZZER || (defined(USE_M5_SPEAKER) && USE_M5_SPEAKER)
     heartbeatBeep();
 #endif

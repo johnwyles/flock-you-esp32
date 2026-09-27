@@ -40,6 +40,56 @@ char gWebServerIP[24] = "";
 
 FyHttpServer gWebServer(80);
 
+// ── WiFi connect diagnostics ────────────────────────────────────────────────
+static volatile uint8_t gWifiLastReason = 0;
+
+static const char *wlStatusName(wl_status_t st) {
+  switch (st) {
+    case WL_IDLE_STATUS: return "idle";
+    case WL_NO_SSID_AVAIL: return "SSID not found";
+    case WL_SCAN_COMPLETED: return "scan done";
+    case WL_CONNECTED: return "connected";
+    case WL_CONNECT_FAILED: return "connect failed";
+    case WL_CONNECTION_LOST: return "connection lost";
+    case WL_DISCONNECTED: return "disconnected";
+    default: return "?";
+  }
+}
+
+static const char *wifiReasonName(uint8_t r) {
+  switch (r) {
+    case WIFI_REASON_AUTH_EXPIRE: return "AUTH_EXPIRE";
+    case WIFI_REASON_ASSOC_LEAVE: return "ASSOC_LEAVE";
+    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT: return "4WAY_HANDSHAKE_TIMEOUT";
+    case WIFI_REASON_BEACON_TIMEOUT: return "BEACON_TIMEOUT";
+    case WIFI_REASON_NO_AP_FOUND: return "NO_AP_FOUND";
+    case WIFI_REASON_AUTH_FAIL: return "AUTH_FAIL";
+    case WIFI_REASON_ASSOC_FAIL: return "ASSOC_FAIL";
+    case WIFI_REASON_HANDSHAKE_TIMEOUT: return "HANDSHAKE_TIMEOUT";
+    case WIFI_REASON_CONNECTION_FAIL: return "CONNECTION_FAIL";
+    default: return "other";
+  }
+}
+
+static const char *wifiReasonHint(uint8_t r) {
+  switch (r) {
+    case WIFI_REASON_NO_AP_FOUND:
+      return "network not seen: check the SSID in .env, that it is 2.4 GHz, and signal range";
+    case WIFI_REASON_AUTH_FAIL:
+    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+    case WIFI_REASON_HANDSHAKE_TIMEOUT:
+      return "router rejected the login: check the password in .env (WPA3-only networks are not supported)";
+    case WIFI_REASON_BEACON_TIMEOUT:
+    case WIFI_REASON_ASSOC_FAIL:
+    case WIFI_REASON_CONNECTION_FAIL:
+      return "weak signal or router busy: move closer to the router and try again";
+    case 0:
+      return "no reason reported by the driver: try again; if it repeats, reboot the device";
+    default:
+      return "see the reason code above";
+  }
+}
+
 // ── Buffered HTML response writer ─────────────────────────────────────────
 // Every HTML page goes through this: one proper header + <head> (doctype,
 // charset, viewport, no-cache, shared CSS), then the body written in full
@@ -170,31 +220,66 @@ void fyWebServerStart() {
   delay(100);
 #endif
 
+  // Turn the sniffer OFF before joining a network. Promiscuous mode left on
+  // during WiFi.begin() keeps the radio parked on the last hop channel and
+  // floods the driver with sniffer callbacks while it is trying to scan and
+  // associate, which can stall or fail the connect.
+  esp_wifi_set_promiscuous(false);
+
   // Use Arduino WiFi library for clean mode transition.
   // WiFi.begin() handles: mode switch, WiFi start, connection, DHCP.
   // We must NOT call esp_wifi_stop() — the Arduino WiFi library's
   // internal state won't recover properly, causing "dhcp client start failed".
   WiFi.mode(WIFI_MODE_STA);
+  WiFi.setSleep(false);  // no modem power-save while serving pages
   delay(100);
 
+  // Capture WHY the router rejected us (reason code from the disconnect event)
+  static bool evRegistered = false;
+  if (!evRegistered) {
+    evRegistered = true;
+    WiFi.onEvent([](arduino_event_id_t, arduino_event_info_t info) {
+      gWifiLastReason = info.wifi_sta_disconnected.reason;
+    }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+  }
+  gWifiLastReason = 0;
+
   // Connect as a station to the target WiFi network
-  Serial.printf("[webserver] Connecting to %s...\n", ssid);
+  Serial.printf("[webserver] Connecting to \"%s\"...\r\n", ssid);
+  mb_wifiStatus = "connecting";
   WiFi.begin(ssid, pass);
   unsigned long startMs = millis();
   bool connected = false;
+  bool retried = false;
 
-  // Wait for connection + DHCP lease (up to 30 seconds)
+  // Wait for connection + DHCP lease (up to 30 seconds, one retry at 12 s)
   while (millis() - startMs < 30000) {
     delay(500);
-    Serial.printf("[webserver] connecting... %lus\n", (millis() - startMs) / 1000);
-    if (WiFi.status() == WL_CONNECTED) {
+    wl_status_t st = WiFi.status();
+    if (st == WL_CONNECTED) {
       connected = true;
       break;
+    }
+    unsigned long el = (millis() - startMs) / 1000;
+    if ((millis() - startMs) % 2000 < 500) {
+      Serial.printf("[webserver] connecting... %lus (%s%s%s)\r\r\n", el, wlStatusName(st),
+                    gWifiLastReason ? ", last reason: " : "",
+                    gWifiLastReason ? wifiReasonName(gWifiLastReason) : "");
+    }
+    if (!retried && millis() - startMs > 12000) {
+      retried = true;
+      Serial.print("[webserver] retrying WiFi.begin()\r\n");
+      WiFi.disconnect();
+      delay(200);
+      WiFi.begin(ssid, pass);
     }
   }
 
   if (!connected) {
-    Serial.println("[webserver] WiFi connect failed, aborting");
+    Serial.printf("[webserver] WiFi connect FAILED after 30 s: status=%s, reason=%u (%s)\r\r\n",
+                  wlStatusName(WiFi.status()), (unsigned)gWifiLastReason,
+                  gWifiLastReason ? wifiReasonName(gWifiLastReason) : "none reported");
+    Serial.printf("[webserver] hint: %s\r\r\n", wifiReasonHint(gWifiLastReason));
     mb_wifiStatus = "connect failed";
     // Clean up: disconnect WiFi, switch back to NULL mode
     WiFi.disconnect(true);
@@ -213,7 +298,7 @@ void fyWebServerStart() {
 
   // WiFi connected — get DHCP-assigned IP
   IPAddress ip = WiFi.localIP();
-  Serial.printf("[webserver] Connected! IP: %s\n", ip.toString().c_str());
+  Serial.printf("[webserver] Connected! IP: %s\r\n", ip.toString().c_str());
 
   mb_wifiStatus = "connected";
   snprintf(mb_webLog, sizeof(mb_webLog), "SSID: %s\r\nPASS: %s\r\nIP: %s", ssid, pass, ip.toString().c_str());
@@ -226,7 +311,7 @@ void fyWebServerStart() {
   snprintf(gWebServerIP, sizeof(gWebServerIP), "%s", ip.toString().c_str());
   mb_showWebLog = true;
   mb_webLogMs = millis();
-  Serial.printf("[webserver] Connected to %s, web server on %s:80\n", ssid, ip.toString().c_str());
+  Serial.printf("[webserver] Connected to %s, web server on %s:80\r\n", ssid, ip.toString().c_str());
 
   // File list cache is populated below after WiFi connects.
   gFileCache = "";

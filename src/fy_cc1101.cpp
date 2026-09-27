@@ -92,7 +92,7 @@ bool cc1101Detect(SPIClass &spi, uint8_t cs) {
   bool ok = (partnum == 0x00) && rb1 == 0xA5 && rb2 == 0x5A &&
             version != 0x00 && version != 0xFF;
   Serial.printf("[cc1101] detect CS=G%u: PARTNUM=0x%02X VERSION=0x%02X "
-                "SYNC1 rw=0x%02X/0x%02X -> %s\n",
+                "SYNC1 rw=0x%02X/0x%02X -> %s\r\n",
                 cs, partnum, version, rb1, rb2, ok ? "PRESENT" : "not found");
   return ok;
 }
@@ -203,7 +203,7 @@ void cc1101Scan() {
         default: break;
       }
       cc1101AddDetection(det);
-      Serial.printf("[cc1101] %s on %u MHz, RSSI=%d dBm, len=%d\n",
+      Serial.printf("[cc1101] %s on %u MHz, RSSI=%d dBm, len=%d\r\n",
                      typeStr, (unsigned)(det.frequency / 1000000), det.rssi, det.length);
     }
   }
