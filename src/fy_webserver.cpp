@@ -433,8 +433,9 @@ void fyWebServerStart() {
     // Extract first object as a String for column extraction
     String firstObj = body.substring(objStart, objEnd + 1);
 
+    // Now iterate through all objects in the array
     // Send table header — extract keys from first object
-    // Uses simple depth tracking (no inStr) — at depth 1, " starts a key name
+    // FIXED: Properly distinguish keys from values by checking BOTH sides of quotes
     client.print("<table><thead><tr>");
     int p = 0;
     depth = 0;
@@ -442,25 +443,59 @@ void fyWebServerStart() {
       char c = firstObj.charAt(p);
       if (c == '{') depth++;
       else if (c == '}') depth--;
+
+      // At depth 1, we're inside an object. Check if this quote is a key or value.
       if (depth == 1 && c == '"') {
-        int q2 = firstObj.indexOf('"', p + 1);
-        if (q2 != -1) {
-          String key = firstObj.substring(p + 1, q2);
-          client.print("<th>" + key + "</th>");
-          p = q2 + 1;
-          // Skip to colon
-          int colon = firstObj.indexOf(':', p);
-          if (colon != -1) p = colon + 1;
-          continue;
+        // Find the matching closing quote
+        int quoteEnd = firstObj.indexOf('"', p + 1);
+        if (quoteEnd == -1) {
+          p++;
+          continue; // Malformed JSON, skip
         }
+
+        String content = firstObj.substring(p + 1, quoteEnd);
+        bool isKey = false;
+
+        // Check what comes BEFORE the opening quote (skip whitespace)
+        int before = p - 1;
+        while (before >= 0 && (firstObj.charAt(before) == ' ' || firstObj.charAt(before) == '\t' || firstObj.charAt(before) == '\r' || firstObj.charAt(before) == '\n')) {
+          before--;
+        }
+        bool beforeIsColon = (before >= 0 && firstObj.charAt(before) == ':');
+        bool beforeIsBraceOrComma = (before >= 0 && (firstObj.charAt(before) == '{' || firstObj.charAt(before) == ','));
+
+        // Check what comes AFTER the closing quote (skip whitespace)
+        int after = quoteEnd + 1;
+        while (after < firstObj.length() && (firstObj.charAt(after) == ' ' || firstObj.charAt(after) == '\t' || firstObj.charAt(after) == '\r' || firstObj.charAt(after) == '\n')) {
+          after++;
+        }
+        bool afterIsColon = (after < firstObj.length() && firstObj.charAt(after) == ':');
+        bool afterIsBraceOrComma = (after < firstObj.length() && (firstObj.charAt(after) == '}' || firstObj.charAt(after) == ','));
+
+        // This is a KEY if: preceded by { or , (with only whitespace) AND followed by : (with only whitespace)
+        // This is a VALUE if: preceded by : (with only whitespace) AND followed by } or , (with only whitespace)
+        if (!beforeIsColon && afterIsColon && (beforeIsBraceOrComma || before < 0)) {
+          // Key pattern: [{(,]\\s*"key"\\s*:
+          isKey = true;
+        } else if (beforeIsColon && !afterIsColon && (afterIsBraceOrComma || after >= firstObj.length())) {
+          // Value pattern: \\s*:\\s*"value"\\s*[,}]]
+          isKey = false;
+        } else {
+          // Ambiguous or malformed - default to treating as value to avoid false headers
+          isKey = false;
+        }
+
+        if (isKey) {
+          client.print("<th>" + content + "</th>");
+        }
+
+        // Move position past this quoted string
+        p = quoteEnd + 1;
+        continue;
       }
       p++;
       yield();
     }
-    client.print("</tr></thead><tbody>");
-    client.flush();
-
-    // Now iterate through all objects in the array
     int dataRows = 0;
     int pos = objStart;
     while (pos < body.length()) {
@@ -639,6 +674,7 @@ void fyWebServerStart() {
 void fyWebServerStop() {
   if (!gWebServerActive) return;
   gWebServer.stop();
+    fySaveSession();
 
   // Switch WiFi back to NULL mode for promiscuous scanning.
   WiFi.disconnect(true);

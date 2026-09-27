@@ -2716,7 +2716,7 @@ void setup() {
   ledSet(false);
 #endif
 
-  startupBeep();
+  // startupBeep();
 #if USE_LED
   // Boot-confirmation flash: briefly show red, then settle to idle (dim
   // green on NeoPixel boards, off on plain-GPIO boards) BEFORE the slow
