@@ -3024,6 +3024,7 @@ void loop()
       promiscPausedForWeb = true;
     }
     fyWebServerTick();
+    delay(1);  // the web server never blocks, so give the idle task a turn
     return;
   }
   promiscPausedForWeb = false;

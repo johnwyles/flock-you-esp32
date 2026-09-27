@@ -6,9 +6,9 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
-#include <WebServer.h>
+#include "fy_http.h"
 
-extern WebServer gWebServer;
+extern FyHttpServer gWebServer;
 
 // Start AP and web server
 void fyWebServerStart();

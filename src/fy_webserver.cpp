@@ -38,7 +38,7 @@ char gWebServerSSID[64] = "";
 char gWebServerPass[64] = "";
 char gWebServerIP[24] = "";
 
-WebServer gWebServer(80);
+FyHttpServer gWebServer(80);
 
 // ── Buffered HTML response writer ─────────────────────────────────────────
 // Every HTML page goes through this: one proper header + <head> (doctype,
@@ -55,7 +55,6 @@ class HtmlOut : public Print {
  public:
   explicit HtmlOut(WiFiClient &c) : _c(c), _start(millis()) {}
   void begin(const char *title, const char *css) {
-    _c.setNoDelay(true);
     print("HTTP/1.1 200 OK\r\n"
           "Content-Type: text/html; charset=utf-8\r\n"
           "Cache-Control: no-store\r\n"
@@ -83,7 +82,7 @@ class HtmlOut : public Print {
   void flushBuf() {
     if (!_used) return;
     if (!_failed) {
-      size_t w = _c.write(_buf, _used);
+      size_t w = fyHttpWriteAll(_c, _buf, _used);
       if (w != _used) _failed = true;
       else _total += w;
     }
