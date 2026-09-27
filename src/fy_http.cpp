@@ -2,6 +2,7 @@
 
 #include "fy_http.h"
 #include <lwip/sockets.h>
+#include <new>
 
 static const uint32_t kIdleMs = 4000;  // close a socket that sent no full request
 
@@ -35,16 +36,24 @@ size_t fyHttpWriteAll(WiFiClient &c, const uint8_t *buf, size_t len, uint32_t ti
 }
 
 void FyHttpServer::begin() {
+  if (!_slots) _slots = new (std::nothrow) Slot[kSlots];
+  if (!_slots) {
+    Serial.print("[web] out of memory: HTTP server not started\r\n");
+    return;
+  }
   _server.begin();
   _server.setNoDelay(true);
   _running = true;
 }
 
 void FyHttpServer::stop() {
-  for (auto &s : _slots) {
-    if (s.used) s.c.stop();
-    s.used = false;
+  if (_slots) {
+    for (int i = 0; i < kSlots; i++)
+      if (_slots[i].used) _slots[i].c.stop();
+    delete[] _slots;
+    _slots = nullptr;
   }
+  _cur = WiFiClient();
   _server.end();
   _running = false;
 }
@@ -83,7 +92,7 @@ bool FyHttpServer::slotAlive(Slot &s) {
 }
 
 void FyHttpServer::handleClient() {
-  if (!_running) return;
+  if (!_running || !_slots) return;
 
   // 1. Accept every pending connection into a free slot. If all slots are
   //    busy, recycle the one that has waited longest without a full request.
@@ -104,6 +113,8 @@ void FyHttpServer::handleClient() {
     s.used = true;
     s.since = millis();
     s.len = 0;
+    s.eoh = 0;
+    s.done = false;
   }
 
   // 2. Read whatever each connection has sent (non-blocking); drop dead or
@@ -112,22 +123,23 @@ void FyHttpServer::handleClient() {
   for (int i = 0; i < kSlots; i++) {
     Slot &s = _slots[i];
     if (!s.used) continue;
-    int avail = s.c.available();
-    if (avail > 0) {
-      int room = kReqBuf - 1 - s.len;
-      if (room > 0) {
-        int n = s.c.read((uint8_t *)s.buf + s.len, min(avail, room));
-        if (n > 0) s.len += n;
-      } else {
-        // headers too large: drain and let it complete/idle out
-        uint8_t junk[64];
-        s.c.read(junk, min(avail, (int)sizeof(junk)));
+    // Consume what arrived: keep the first kReqBuf-1 bytes (request line),
+    // and scan every byte for the "\r\n\r\n" that ends the headers.
+    uint8_t chunk[64];
+    int avail;
+    while (!s.done && (avail = s.c.available()) > 0) {
+      int n = s.c.read(chunk, min(avail, (int)sizeof(chunk)));
+      if (n <= 0) break;
+      for (int k = 0; k < n && !s.done; k++) {
+        char ch = (char)chunk[k];
+        if (s.len < kReqBuf - 1) s.buf[s.len++] = ch;
+        static const char kEoh[] = "\r\n\r\n";
+        s.eoh = (ch == kEoh[s.eoh]) ? s.eoh + 1 : (ch == '\r' ? 1 : 0);
+        if (s.eoh == 4) s.done = true;
       }
-      s.buf[s.len] = '\0';
     }
-    bool complete = s.len >= 4 && strstr(s.buf, "\r\n\r\n") != nullptr;
-    bool lineOnly = s.len == kReqBuf - 1 && strstr(s.buf, "\r\n") != nullptr;  // truncated headers
-    if (complete || lineOnly) {
+    s.buf[s.len] = '\0';
+    if (s.done && strstr(s.buf, "\r\n")) {
       if (ready < 0) ready = i;
       continue;
     }

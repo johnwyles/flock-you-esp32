@@ -49,13 +49,20 @@ class FyHttpServer {
   void sendHeader(const char *name, const String &value);
 
  private:
-  static const int kSlots = 6;
-  static const int kReqBuf = 768;
+  // Memory: the slots are heap-allocated in begin() and freed in stop(), so
+  // NOTHING is reserved while WiFi is connecting (the WPA2 handshake needs
+  // free heap; a permanently reserved ~6 KB here made it time out). Only the
+  // request line is kept; the rest of the headers are consumed and counted
+  // just to find the blank line that ends them.
+  static const int kSlots = 4;
+  static const int kReqBuf = 320;
   struct Slot {
     WiFiClient c;
     bool used = false;
     unsigned long since = 0;
     uint16_t len = 0;
+    uint8_t eoh = 0;  // matched bytes of "\r\n\r\n"
+    bool done = false;
     char buf[kReqBuf];
   };
   struct Route {
@@ -67,7 +74,7 @@ class FyHttpServer {
   void dispatch(Slot &s);
 
   WiFiServer _server;
-  Slot _slots[kSlots];
+  Slot *_slots = nullptr;
   Route _routes[16];
   int _nRoutes = 0;
   Handler _notFound;

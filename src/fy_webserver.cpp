@@ -104,13 +104,18 @@ static const char *wifiReasonHint(uint8_t r) {
 // counts bytes and write failures and logs one line per request, e.g.
 //   [web] GET /table?name=track-0001.json -> 200, 18342 B in 412 ms
 //   [web] GET /files -> WRITE FAILED after 2920 B (client gone?) in 5031 ms
-// Pages are served one at a time on the loop task, so one static buffer is
-// shared instead of putting 1.4 KB on the (8 KB) loop-task stack per request.
-static uint8_t sHtmlBuf[1400];
+// The write buffer is taken from the heap per request (web server already
+// connected by then) and released at finish(), so it reserves no RAM while
+// WiFi is connecting and nothing on the 8 KB loop-task stack.
+static const size_t kHtmlBuf = 1024;
 
 class HtmlOut : public Print {
  public:
-  explicit HtmlOut(WiFiClient &c) : _c(c), _start(millis()) {}
+  explicit HtmlOut(WiFiClient &c) : _c(c), _start(millis()) {
+    _buf = (uint8_t *)malloc(kHtmlBuf);
+    _cap = _buf ? kHtmlBuf : 0;
+  }
+  ~HtmlOut() { free(_buf); }
   void begin(const char *title, const char *css) {
     print("HTTP/1.1 200 OK\r\n"
           "Content-Type: text/html; charset=utf-8\r\n"
@@ -126,13 +131,18 @@ class HtmlOut : public Print {
   }
   size_t write(uint8_t b) override { return write(&b, 1); }
   size_t write(const uint8_t *buf, size_t len) override {
+    if (!_cap) {  // no buffer (out of memory): write straight through
+      if (!_failed && fyHttpWriteAll(_c, buf, len) != len) _failed = true;
+      else if (!_failed) _total += len;
+      return len;
+    }
     size_t done = 0;
     while (done < len) {
-      size_t n = min(len - done, sizeof(sHtmlBuf) - _used);
+      size_t n = min(len - done, _cap - _used);
       memcpy(_buf + _used, buf + done, n);
       _used += n;
       done += n;
-      if (_used == sizeof(sHtmlBuf)) flushBuf();
+      if (_used == _cap) flushBuf();
     }
     return len;
   }
@@ -159,7 +169,8 @@ class HtmlOut : public Print {
  private:
   WiFiClient &_c;
   unsigned long _start;
-  uint8_t *const _buf = sHtmlBuf;
+  uint8_t *_buf = nullptr;
+  size_t _cap = 0;
   size_t _used = 0;
   size_t _total = 0;
   bool _failed = false;
@@ -278,6 +289,9 @@ void fyWebServerStart() {
     }
     WiFi.scanDelete();
   }
+
+  Serial.printf("[webserver] free heap %u B, largest block %u B\r\n",
+                (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
 
   // Connect as a station to the target WiFi network
   Serial.printf("[webserver] Connecting to \"%s\"...\r\n", ssid);
