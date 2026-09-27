@@ -75,6 +75,10 @@ bool gpsRead();
 // Returns true when that byte completed a checksum-valid sentence.
 bool gpsFeedChar(char c);
 
+// True once the system clock has been set from a valid GPS RMC sentence
+// (the M5Stack Basic has no battery-backed RTC, so time() starts at 1970).
+bool gpsClockValid();
+
 // Record a waypoint with current GPS position
 bool waypointRecord(const char *label);
 

@@ -17,8 +17,8 @@
 //
 // Button actions (flock-you-esp32):
 //   A — force SPIFFS session save
-//   B — cycle display brightness (40 → 160 → 255 → 40)
-//   C — force immediate channel hop
+//   B — short: GPS waypoint   hold 1 s: tracking mode start/stop (fy_track.h)
+//   C — short: dismiss alert / exit web server   hold 0.5 s: web server on/off
 #pragma once
 #if defined(USE_M5BASIC)
 
@@ -542,7 +542,7 @@ static void m5basicScanning(uint8_t ch, const char* modeName, int detCount,
     M5.Display.printf("Runtime: %-10s  SPIFFS: %s", el, spiffsOk ? "OK" : "ERR");
 
     mb_drawLogStrip(true);   // force: this whole region was just fillRect(BLACK)'d above
-    mb_btnBar("SAVE", "WAYPOINT", "WEB");
+    mb_btnBar("SAVE", "WPT/TRK", "WEB");
 }
 
 
@@ -668,7 +668,7 @@ static void m5basicDetection(const char* method, const char* mac,
         M5.Display.print("LOW — possible false positive");
 
     mb_drawLogStrip(true);   // force: the whole content area was just fillRect(BLACK)'d for this alert screen
-    mb_btnBar("SAVE", "WAYPOINT", "WEB");
+    mb_btnBar("SAVE", "WPT/TRK", "WEB");
 
 
     // Core2 For AWS: vibration alert — non-blocking. Triggers the pattern;
@@ -686,7 +686,8 @@ static void m5basicDetection(const char* method, const char* mac,
 
 // ── Button tick ───────────────────────────────────────────────────────────────
 // Call from loop() every iteration.
-// Returns: 0=none  1=A(save)  2=B(brightness)  3=C(hop/clear)  4=C long(web toggle)
+// Returns: 0=none 1=A(save) 2=B short(waypoint) 3=C short(dismiss/web exit)
+//          4=C long(web toggle) 5=B hold(tracking toggle)
 bool waypointRecordManual(const char *label);
 extern bool gWebServerMode;
 
@@ -695,8 +696,19 @@ static int m5basicButtonTick() {
     // Manual button detection using isPressed() for reliability —
     // M5Unified's wasPressed()/wasHold() edge detection sometimes fails
     // to fire in a FreeRTOS task context on M5Stack Basic.
+    //
+    // Return codes (consumed by loop() via ui_task.h's action queue):
+    //   1 = A press            -> save session
+    //   2 = B short (release)  -> manual waypoint
+    //   5 = B hold >= 1 s      -> tracking mode start/stop
+    //   3 = C short (release)  -> dismiss alert / exit web server
+    //   4 = C hold >= 0.5 s    -> web server on/off
+    // B and C act on RELEASE for short presses so a hold never also fires the
+    // short-press action. Each button has its own latch, so pressing two
+    // buttons at once produces one action for each, never a mixed one.
     static bool btnALatched = false, btnBLatched = false, btnCLatched = false;
-    static unsigned long btnCHoldStart = 0;
+    static unsigned long btnBHoldStart = 0, btnCHoldStart = 0;
+    static bool btnBLongConsumed = false;
     static bool btnCLongConsumed = false;  // fire long-press only once per hold
 
     // Btn A — short press = save session
@@ -704,15 +716,23 @@ static int m5basicButtonTick() {
         if (!btnALatched) { btnALatched = true; return 1; }
     } else { btnALatched = false; }
 
-    // Btn B — short press = record waypoint + brightness cycle
+    // Btn B — short press (released < 1 s) = waypoint, hold 1 s = tracking
+    // toggle (fires while still held so the beep confirms it). The waypoint
+    // itself is recorded by loop() (the task that owns storage writes).
     if (M5.BtnB.isPressed()) {
-        if (!btnBLatched) {
-            btnBLatched = true;
-            // Waypoint is recorded by loop() on action 2 (single call, on the
-            // task that owns SD writes); recording here too made duplicates.
-            return 2;
+        if (btnBHoldStart == 0) btnBHoldStart = millis();
+        btnBLatched = true;
+        if (millis() - btnBHoldStart >= 1000 && !btnBLongConsumed) {
+            btnBLongConsumed = true;
+            return 5;
         }
-    } else { btnBLatched = false; }
+    } else if (btnBLatched) {
+        bool wasLong = btnBLongConsumed;
+        btnBLatched = false;
+        btnBLongConsumed = false;
+        btnBHoldStart = 0;
+        if (!wasLong) return 2;
+    }
 
     // Btn C — short press = det list / web exit, long press (>=500ms) = web toggle
     if (M5.BtnC.isPressed()) {
@@ -736,10 +756,13 @@ static int m5basicButtonTick() {
             return 0;
         }
         if (wasLatched) {
-            // Was held < 500ms and released — short press
+            // Was held < 500ms and released — short press. Also cancel the
+            // alert hold, otherwise the 15 s MB_ALERT_HOLD_MS kept the alert
+            // on screen and this "return" press appeared to do nothing.
             mb_needsRedraw = true;
             mb_inAlert = false;
-            return 3;  // short press = det list / web exit
+            mb_lastAlertMs = 0;
+            return 3;  // short press = dismiss alert / web exit
         }
         return 0;  // button not pressed, nothing to do
     }

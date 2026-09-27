@@ -232,7 +232,7 @@ void fyWebServerStart() {
           while (f && count < 32) {
             if (!f.isDirectory()) {
               String fname = f.name();
-              if (fname.startsWith("flock_you-") || fname.startsWith("waypoints-")) {
+              if (fname.startsWith("flock_you-") || fname.startsWith("waypoints-") || fname.startsWith("track-") || fname.startsWith("/track-") || fname.startsWith("/waypoints-")) {
                 names[count++] = fname;
               }
             }
@@ -391,14 +391,11 @@ void fyWebServerStart() {
       return;
     }
 
-    // Find the JSON array: look for the first '[' after the metadata header
+    // Find the JSON array: look for the first '[' after the metadata header.
+    // Waypoint/track files are JSON Lines (one object per line, no array),
+    // so fall back to the first object when there is no '['.
     int arrStart = body.indexOf('[');
-    if (arrStart == -1) {
-      client.print("<div class='card'><p>No data array found.</p></div>");
-      client.print("</div></body></html>");
-      client.stop();
-      return;
-    }
+    if (arrStart == -1) arrStart = 0;
 
     // Extract column names from the first object in the array
     // Find first '{"' after arrStart
@@ -644,7 +641,7 @@ void fyWebServerStart() {
       while (f) {
         if (!f.isDirectory()) {
           String fname = f.name();
-          if (fname.startsWith("flock_you-") || fname.startsWith("waypoints-")) {
+          if (fname.startsWith("flock_you-") || fname.startsWith("waypoints-") || fname.startsWith("track-") || fname.startsWith("/track-") || fname.startsWith("/waypoints-")) {
             if (fname.startsWith("/")) fname = fname.substring(1);
             gFileCache += fname;
             gFileCache += "|SD|";
@@ -662,7 +659,7 @@ void fyWebServerStart() {
       fs::File f = root.openNextFile();
       while (f) {
         String fname = f.name();
-        if (fname.startsWith("flock_you-") || fname.startsWith("waypoints-")) {
+        if (fname.startsWith("flock_you-") || fname.startsWith("waypoints-") || fname.startsWith("track-") || fname.startsWith("/track-") || fname.startsWith("/waypoints-")) {
           gFileCache += fname;
           gFileCache += "|SPIF|";
         }

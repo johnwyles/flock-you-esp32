@@ -14,6 +14,8 @@
 //   CMD:DIAG     — re-probe GPS + CC1101 and print the module report
 //   CMD:MODULES  — print the last module report + live GPS stats (no re-probe)
 //   CMD:NMEA     — echo raw GPS bytes to the console for 5 seconds
+//   CMD:TRACK    — start/stop GPS tracking mode (same as holding Btn B)
+//   CMD:TRACK <s>— set the tracking interval in seconds (1-3600)
 
 #include <Arduino.h>
 #include "fy_globals.h"
@@ -21,6 +23,7 @@
 #include "fy_cc1101.h"
 #include "fy_module_diag.h"
 #include "storage_backend.h"
+#include "fy_track.h"
 #include "fy_webserver.h"
 #include "fy_serial.h"
 
@@ -65,6 +68,8 @@ void fySerialProcess()
     Serial.println("  CMD:DIAG     — re-probe GPS + CC1101 and print module report");
     Serial.println("  CMD:MODULES  — print module report + live GPS stats");
     Serial.println("  CMD:NMEA     — echo raw GPS output for 5 seconds");
+    Serial.println("  CMD:TRACK    — start/stop GPS tracking (same as holding B)");
+    Serial.println("  CMD:TRACK n  — set tracking interval to n seconds");
 
   } else if (cmd.equalsIgnoreCase("CMD:INFO")) {
     Serial.println("[flockyou] === Device Info ===");
@@ -144,6 +149,15 @@ void fySerialProcess()
       Serial.println("\n[diag] end of raw GPS output");
     }
 
+  } else if (cmd.equalsIgnoreCase("CMD:TRACK")) {
+    if (fyTrackActive()) fyTrackStop();
+    else fyTrackStart();
+
+  } else if (cmd.startsWith("CMD:TRACK ") || cmd.startsWith("cmd:track ")) {
+    long sec = cmd.substring(10).toInt();
+    if (sec >= 1 && sec <= 3600) fyTrackSetInterval((uint32_t)sec);
+    else Serial.println("[track] usage: CMD:TRACK <seconds 1-3600>");
+
   } else if (cmd.equalsIgnoreCase("CMD:WEB")) {
     if (gWebServerMode) {
       fyWebServerStop();
@@ -151,7 +165,7 @@ void fySerialProcess()
       Serial.println("[flockyou] Web server stopped");
     } else {
       fyWebServerStart();
-      gWebServerMode = true;
+      gWebServerMode = fyWebServerActive();  // false if WiFi connect failed
       Serial.println("[flockyou] Web server started");
     }
 

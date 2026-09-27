@@ -5,12 +5,52 @@
 #include "fy_gps.h"
 #include <Wire.h>
 #include <time.h>
+#include <sys/time.h>
 
 // Current fix state + receiver statistics
 GpsFix gCurrentFix;
 GpsStats gGpsStats;
 
 static TwoWire *gGpsWire = nullptr;
+static bool gClockValid = false;
+static unsigned long gClockSetMs = 0;
+
+bool gpsClockValid() { return gClockValid; }
+
+// days since 1970-01-01 for a civil date (Howard Hinnant's algorithm);
+// avoids mktime()/TZ entirely, NMEA time is always UTC.
+static long daysFromCivil(int y, unsigned m, unsigned d) {
+  y -= m <= 2;
+  const long era = (y >= 0 ? y : y - 399) / 400;
+  const unsigned yoe = (unsigned)(y - era * 400);
+  const unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+  const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return era * 146097 + (long)doe - 719468;
+}
+
+// RMC time "hhmmss.ss" + date "ddmmyy" -> system clock (UTC). Re-synced
+// every 10 minutes while the fix is valid.
+static void gpsMaybeSetClock(const char *hms, const char *dmy) {
+  if (strlen(hms) < 6 || strlen(dmy) != 6) return;
+  if (gClockValid && millis() - gClockSetMs < 600000UL) return;
+  int hh = (hms[0] - '0') * 10 + (hms[1] - '0');
+  int mi = (hms[2] - '0') * 10 + (hms[3] - '0');
+  int ss = (hms[4] - '0') * 10 + (hms[5] - '0');
+  int dd = (dmy[0] - '0') * 10 + (dmy[1] - '0');
+  int mo = (dmy[2] - '0') * 10 + (dmy[3] - '0');
+  int yy = 2000 + (dmy[4] - '0') * 10 + (dmy[5] - '0');
+  if (mo < 1 || mo > 12 || dd < 1 || dd > 31 || hh > 23 || mi > 59 || ss > 60) return;
+  struct timeval tv;
+  tv.tv_sec = (time_t)(daysFromCivil(yy, mo, dd) * 86400L + hh * 3600L + mi * 60L + ss);
+  tv.tv_usec = 0;
+  settimeofday(&tv, nullptr);
+  if (!gClockValid) {
+    Serial.printf("[gps] clock set from GPS: %04d-%02d-%02d %02d:%02d:%02d UTC\r\n",
+                  yy, mo, dd, hh, mi, ss);
+  }
+  gClockValid = true;
+  gClockSetMs = millis();
+}
 static HardwareSerial *gGpsUart = nullptr;
 
 // NMEA parser state
@@ -117,7 +157,10 @@ static bool nmeaProcess(char *line) {
   } else if (strncmp(type, "RMC", 3) == 0 && n >= 8) {
     // $xxRMC,time,status,lat,N,lon,E,speed_kn,...
     gGpsStats.rmc++;
-    if (f[2][0] == 'A') gCurrentFix.speed = atof(f[7]) * 1.852f;  // km/h
+    if (f[2][0] == 'A') {
+      gCurrentFix.speed = atof(f[7]) * 1.852f;  // km/h
+      if (n >= 10) gpsMaybeSetClock(f[1], f[9]);
+    }
   } else if (strncmp(type, "GSV", 3) == 0 && n >= 4) {
     gGpsStats.gsv++;
     gGpsStats.satsInView = (uint8_t)atoi(f[3]);

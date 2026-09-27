@@ -162,11 +162,21 @@ Scans all 4 bands every 5 seconds.
 
 ### GPS Waypoints
 **What it does:**
-- Reads NMEA sentences from GPS Unit v1.1 (AT6668) over I2C
+- Reads NMEA sentences from the GPS over UART (see the module table for pins)
 - Extracts: latitude, longitude, altitude, speed, satellite count, HDOP, timestamp
-- **Btn B**: manual waypoint marker with label `"manual"`
-- Auto-save: appends to `waypoints-YYYY-MM-DD.json` every 60 seconds when GPS fix valid
+- Sets the system clock (UTC) from GPS time once there is a fix, so file dates and timestamps are real (the Basic has no RTC)
+- **Btn B short press**: manual waypoint with label `"manual"`, appended to `waypoints-YYYY-MM-DD.json` (needs a GPS fix; the screen/log says why if it was not saved)
 - File rolls over when date changes
+
+### GPS Tracking Mode
+- **Hold Btn B for 1 s** to start (one beep); hold again to stop (two beeps). Also `CMD:TRACK`.
+- Logs one point every interval (default 5 s, `CMD:TRACK <seconds>` to change) to a new `/track-NNNN.json` per session, one JSON object per line: `seq, event, utc, ts, up_ms, lat, lon, alt, spd_kmh, sats, hdop`
+- With no fix, the tick is skipped and counted (tracking can be started indoors and begins recording once a fix arrives)
+- Each point is written and closed immediately, so a power cut loses at most one point
+- The tracking screen shows REC time, interval, file, points/skipped, fix status, position, speed and the last 6 points; each point is also printed as `[track] #N ...` on serial
+- A short Btn B press while tracking saves a normal waypoint **and** writes an `"event":"mark"` line into the track file
+- Scanning continues while tracking; detection alerts still take over the screen (Btn C short press dismisses them). Tracking keeps logging while the web server is on.
+- Tracking is off after every reboot
 
 **What gets recorded:**
 - Unix timestamp
@@ -178,7 +188,7 @@ Scans all 4 bands every 5 seconds.
 - GPS coordinates are also appended to **every WiFi/BLE/CC1101/LoRa detection** when fix is valid
 
 ### Webserver Mode
-- **Btn C long press (800ms)** toggles AP mode
+- **Btn C long press (0.5 s)** toggles the web server (station mode, joins the WiFi from `.env`); **Btn C short press** exits it
 - SSID: `flock-you` / Password: `flockyou` (from `.env` at compile time)
 - IP: `192.168.4.1`
 - Display shows: WiFi status (connecting/connected/disconnected) + activity log
@@ -191,17 +201,21 @@ Scans all 4 bands every 5 seconds.
 - **SPIFFS** (internal flash) or **SD card** (if M5Launcher)
 - Detections: `flock_you-YYYY-MM-DD.json` (e.g., `flock_you-2026-05-01.json`)
 - Waypoints: `waypoints-YYYY-MM-DD.json`
+- GPS tracks: `track-NNNN.json` (one per tracking session)
 - Auto-save every 60s when new detections
-- Manual save: **Btn A**
+- Manual save: **Btn A** (skipped with a message if nothing new was detected since boot)
 
 ## Button Mapping
 
 | Button | Action |
 |--------|--------|
 | **A** | Save session (all detections to JSON) |
-| **B** | Record GPS waypoint (manual) |
-| **C** (short) | Show recent detections list (8s auto-hide) |
-| **C** (long, 800ms) | Toggle webserver on/off |
+| **B** (short, release < 1 s) | Record GPS waypoint (manual); also marks the track while tracking |
+| **B** (hold 1 s) | Start / stop GPS tracking mode |
+| **C** (short) | Dismiss alert / return to main screen; exits the web server when it is on |
+| **C** (hold 0.5 s) | Toggle web server on/off |
+
+Buttons are independent: each has its own latch, B and C short presses fire on release so a hold never also triggers the short action, presses are queued (up to 4) so none are lost while the main loop is busy, and presses made while the web server is connecting/stopping (which blocks up to 30 s) are discarded rather than replayed.
 
 ## Serial Debug Commands
 
@@ -220,6 +234,9 @@ All commands case-insensitive, end with newline:
 | `CMD:FAKE_LORA` | Inject fake LoRa detection |
 | `CMD:CLEAR` | Clear all detections buffer |
 | `CMD:STATUS` | Print module status, detection count, free heap |
+| `CMD:TRACK` | Start/stop GPS tracking mode |
+| `CMD:TRACK <s>` | Set tracking interval (1-3600 s) |
+| `CMD:DIAG` / `CMD:MODULES` / `CMD:NMEA` | Module diagnostics (see above) |
 
 **CMD:FAKE behavior:**
 - 1 WiFi detection

@@ -34,10 +34,13 @@
 //     m5stickcDetection() calls.
 //   uiForceC5Redraw()      — request an out-of-cycle C5 scanning redraw
 //                             (used by the HAS_SIMPLE_BUTTON handler).
-//   uiTakeButtonAction()   — call once per loop() iteration; returns
-//                             0=none 1=save 3=det-list 4=web-toggle (mirrors
-//                             m5basicButtonTick()/m5stickcButtonTick()
-//                             return codes for those two actions).
+//   uiTakeButtonAction()   — call once per loop() iteration; pops the oldest
+//                             queued action: 0=none 1=save 2=waypoint
+//                             3=dismiss/web-exit 4=web-toggle 5=track-toggle
+//                             (m5basicButtonTick() return codes).
+//   uiFlushButtonActions() — drop queued actions (after a blocking web
+//                             server start/stop, so presses made while it
+//                             was blocked don't replay afterwards).
 //   uiRequestAudio(which)  — called internally by newDetectChirp()/
 //                             heartbeatBeep() (main.cpp) instead of touching
 //                             M5.Speaker directly, only when USE_M5BASIC.
@@ -46,6 +49,9 @@
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#if defined(USE_M5BASIC)
+#include "m5basic_track_screen.h"
+#endif
 
 // Forward declarations for web server display function (defined in main.cpp)
 extern bool gWebServerMode;
@@ -180,28 +186,40 @@ static void uiPublishAlert(const char* method, const char* mac, uint8_t confiden
     portEXIT_CRITICAL(&g_uiAlertMux);
 }
 
-// ── Button-action feedback (UI task -> loop()) ─────────────────────────────
-// M5.update()/M5.BtnX are only ever called from the UI task now (see
-// uiTaskFn). loop() consumes whichever action (if any) got recorded since
-// its last check. Codes match the old m5basicButtonTick()/
-// m5stickcButtonTick() return values for the two actions loop() must act
-// on: 1 = Btn A (save), 3 = Btn C short (det list), 4 = Btn C long (web toggle).
-// brightness cycle (code 2) is fully handled inside the button-tick call
-// itself and needs no feedback here.
-static volatile uint8_t g_uiButtonAction = 0;
-static portMUX_TYPE     g_uiBtnMux       = portMUX_INITIALIZER_UNLOCKED;
+// ── Button-action queue (UI task -> loop()) ────────────────────────────────
+// M5.update()/M5.BtnX are only ever called from the UI task (see uiTaskFn).
+// Actions go into a small FIFO that loop() drains one per iteration. This
+// used to be a single slot, so a second press arriving while loop() was busy
+// (e.g. the ~0.4 s CC1101 band scan) silently overwrote the first one.
+// Codes: 1=A save 2=B waypoint 3=C short 4=C long (web) 5=B hold (tracking).
+static constexpr uint8_t UI_BTN_QUEUE = 4;
+static volatile uint8_t g_uiBtnQ[UI_BTN_QUEUE];
+static volatile uint8_t g_uiBtnHead = 0, g_uiBtnCount = 0;
+static portMUX_TYPE     g_uiBtnMux  = portMUX_INITIALIZER_UNLOCKED;
 
 static uint8_t uiTakeButtonAction() {
-    uint8_t a;
+    uint8_t a = 0;
     portENTER_CRITICAL(&g_uiBtnMux);
-    a = g_uiButtonAction;
-    g_uiButtonAction = 0;
+    if (g_uiBtnCount) {
+        a = g_uiBtnQ[g_uiBtnHead];
+        g_uiBtnHead = (g_uiBtnHead + 1) % UI_BTN_QUEUE;
+        g_uiBtnCount--;
+    }
     portEXIT_CRITICAL(&g_uiBtnMux);
     return a;
 }
 static void uiSetButtonAction(uint8_t a) {
     portENTER_CRITICAL(&g_uiBtnMux);
-    g_uiButtonAction = a;
+    if (g_uiBtnCount < UI_BTN_QUEUE) {  // full queue: drop the newest press
+        g_uiBtnQ[(g_uiBtnHead + g_uiBtnCount) % UI_BTN_QUEUE] = a;
+        g_uiBtnCount++;
+    }
+    portEXIT_CRITICAL(&g_uiBtnMux);
+}
+static void uiFlushButtonActions() {
+    portENTER_CRITICAL(&g_uiBtnMux);
+    g_uiBtnHead = 0;
+    g_uiBtnCount = 0;
     portEXIT_CRITICAL(&g_uiBtnMux);
 }
 
@@ -213,7 +231,7 @@ static void uiSetButtonAction(uint8_t a) {
 // (plain tone()/noTone() buzzer, or M5.Speaker on a display-less Atom
 // Voice/VoiceS3R build) never touches a display object and is left calling
 // M5.Speaker/tone() directly from the scan/main task exactly as before.
-static volatile uint8_t g_uiAudioReq = 0;   // 0=none 1=newDetectChirp 2=heartbeatBeep
+static volatile uint8_t g_uiAudioReq = 0;   // 0=none 1=newDetectChirp 2=heartbeatBeep 3=track start 4=track stop
 static portMUX_TYPE     g_uiAudioMux = portMUX_INITIALIZER_UNLOCKED;
 
 static void uiRequestAudio(uint8_t which) {
@@ -241,6 +259,19 @@ static void uiPlayChirp() {
     delay(NEW_CHIRP_NOTE_MS);
     M5.Speaker.stop();
 }
+// Tracking start: one rising beep. Tracking stop: two falling beeps.
+static void uiPlayTrackStart() {
+    M5.Speaker.tone(1800, 120);
+    delay(130);
+    M5.Speaker.stop();
+}
+static void uiPlayTrackStop() {
+    M5.Speaker.tone(1800, 90);
+    delay(130);
+    M5.Speaker.tone(1100, 140);
+    delay(150);
+    M5.Speaker.stop();
+}
 static void uiPlayHeartbeatBeep() {
     M5.Speaker.tone(HB_BEEP_HZ, HB_BEEP_NOTE_MS);
     delay(HB_BEEP_NOTE_MS + HB_BEEP_GAP_MS);
@@ -258,6 +289,10 @@ static void uiTaskFn(void* pv) {
     uint32_t      consumedAlertSeq  = 0;
     unsigned long lastC5HeartbeatMs = 0;
     bool           lastWsMode = false;   // detect gWebServerMode transition
+#if defined(USE_M5BASIC)
+    bool           lastTracking = false; // detect tracking start/stop
+    FyTrackSnapshot trackSnap;
+#endif
     const TickType_t period = pdMS_TO_TICKS(50);
 
     for (;;) {
@@ -325,20 +360,30 @@ static void uiTaskFn(void* pv) {
             // force a full redraw of the scanning screen by invalidating
             // the last-drawn detection count (tricks m5basicScanning into
             // taking the contentChanged path).
-            if (lastWsMode) {
-                mb_lastDetCount = -1;
+            fyTrackGetSnapshot(trackSnap);
+            if (lastWsMode || trackSnap.active != lastTracking) {
+                mb_lastDetCount = -1;       // full scanning redraw next time
+                mbTrackForceRedraw();       // full tracking redraw next time
             }
+            lastTracking = trackSnap.active;
             if (alertWins) {
                 m5basicDetection(alert.method, alert.mac, alert.confidence, alert.rssi,
                                   alert.channel, alert.ssid, alert.detCount, alert.lastSeenMs);
             }
-            m5basicScanning(scan.channel, scan.modeName, scan.detCount, now,
-                            scan.spiffsOk, (int)FY_OUI_HIGH_COUNT, (int)FY_OUI_MFR_COUNT);
+            // Tracking screen replaces the scanning screen while tracking is
+            // on. Both honour the same MB_ALERT_HOLD_MS so a detection alert
+            // still shows first; C short press dismisses it early.
+            if (trackSnap.active) {
+                m5basicTracking(trackSnap, scan.channel, scan.detCount);
+            } else {
+                m5basicScanning(scan.channel, scan.modeName, scan.detCount, now,
+                                scan.spiffsOk, (int)FY_OUI_HIGH_COUNT, (int)FY_OUI_MFR_COUNT);
+            }
         }
         lastWsMode = gWebServerMode;
         {
             int btn = m5basicButtonTick();
-            if (btn == 1 || btn == 2 || btn == 3 || btn == 4) uiSetButtonAction((uint8_t)btn);
+            if (btn >= 1 && btn <= 5) uiSetButtonAction((uint8_t)btn);
         }
 # if defined(USE_M5CORE2_AWS)
         m5basicVibrationTick();
@@ -347,6 +392,8 @@ static void uiTaskFn(void* pv) {
             uint8_t req = uiTakeAudioRequest();
             if (req == 1)      uiPlayChirp();
             else if (req == 2) uiPlayHeartbeatBeep();
+            else if (req == 3) uiPlayTrackStart();
+            else if (req == 4) uiPlayTrackStop();
         }
 #endif
 
@@ -374,6 +421,6 @@ static void uiTaskFn(void* pv) {
 // hardware that has nothing for it to draw.
 static void startUiTask() {
 #if (defined(USE_C5_DISPLAY) && USE_C5_DISPLAY) || defined(USE_M5BASIC) || defined(USE_M5STICKC_PLUS_SE)
-    xTaskCreatePinnedToCore(uiTaskFn, "flock_ui", 4096, nullptr, 1, &g_uiTaskHandle, 1);
+    xTaskCreatePinnedToCore(uiTaskFn, "flock_ui", 6144, nullptr, 1, &g_uiTaskHandle, 1);
 #endif
 }

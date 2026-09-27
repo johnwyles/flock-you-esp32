@@ -70,6 +70,7 @@
 #include "fy_gps.h"
 #include "fy_cc1101.h"
 #include "fy_module_diag.h"
+#include "fy_track.h"
 #include "fy_webserver.h"
 #include "fy_hardware.h"
 #include "fy_serial.h"
@@ -2453,7 +2454,7 @@ void m5basicDrawWebLog() {
     M5.Display.printf("PASS: %s", gWebServerPass);
     M5.Display.setCursor(4, MB_HDR_H + 74);
     M5.Display.setTextColor(MB_WHITE, MB_DARK_GRN);
-    M5.Display.printf("IP:   %s  Hold BtnC to exit", gWebServerIP);
+    M5.Display.printf("IP:   %s  Press C to exit", gWebServerIP);
 }
 
 void setup() {
@@ -2926,21 +2927,54 @@ void loop()
   // Btn C can stop the web server while it's active.
 #if defined(USE_M5BASIC) || defined(USE_M5STICKC_PLUS_SE)
   {
+    // Button actions (queued by the UI task, one handled per iteration).
+    // Every action is independent of the others:
+    //   A (1) save session           - works in every mode, incl. web/tracking
+    //   B (2) waypoint               - works in every mode; also marks the
+    //                                  track file while tracking
+    //   B hold (5) tracking on/off   - works in every mode; tracking keeps
+    //                                  logging while the web server runs
+    //   C (3) dismiss alert / exit web server
+    //   C hold (4) web server on/off
+    // Web start/stop BLOCKS (WiFi connect can take 30 s), so presses queued
+    // while it was blocked are dropped instead of replayed afterwards.
     uint8_t btn = uiTakeButtonAction();
     if (btn == 1)
     {
       Serial.println("[flockyou] Manual save (button)");
+      unsigned long before = fyLastSaveAt;
       fySaveSession();
+      fyTrackSetNote(fyLastSaveAt != before ? "Session saved" : "Save skipped: nothing new");
     }
     else if (btn == 2)
     {
-      if (!gHasGPS)
+      if (!gHasGPS) {
         dualPrintln("[flockyou] Waypoint: no GPS module detected");
-      else if (waypointRecord("manual"))
-        dualPrintln("[flockyou] Waypoint recorded (button)");
-      else
+        fyTrackSetNote("Waypoint: no GPS module");
+      } else if (waypointRecord("manual")) {
+        bool marked = fyTrackMark();
+        dualPrintln(marked ? "[flockyou] Waypoint recorded (button) + marked in track"
+                           : "[flockyou] Waypoint recorded (button)");
+        fyTrackSetNote("Waypoint saved");
+      } else {
         dualPrintf("[flockyou] Waypoint NOT saved: no GPS fix yet (%u sats used, %u in view)\n",
                    gCurrentFix.satellites, gGpsStats.satsInView);
+        fyTrackSetNote("Waypoint NOT saved: no GPS fix");
+      }
+    }
+    else if (btn == 5)
+    {
+      if (fyTrackActive()) {
+        fyTrackStop();
+        uiRequestAudio(4);
+        dualPrintln("[flockyou] Tracking: OFF");
+      } else if (fyTrackStart()) {
+        uiRequestAudio(3);
+        dualPrintln("[flockyou] Tracking: ON (hold B to stop)");
+      } else {
+        dualPrintln(gHasGPS ? "[flockyou] Tracking NOT started (storage error)"
+                            : "[flockyou] Tracking NOT started: no GPS module");
+      }
     }
     else if (btn == 3)
     {
@@ -2948,12 +2982,13 @@ void loop()
       if (gWebServerMode) {
         fyWebServerStop();
         gWebServerMode = false;
+        uiFlushButtonActions();
         Serial.println("[flockyou] Web server: OFF");
       } else {
-        // Normal: show detection list (clear alert display, force redraw)
+        // Normal: dismiss alert, force redraw (scanning or tracking screen)
         mb_needsRedraw = true;
         mb_inAlert = false;
-        Serial.println("[flockyou] Det list (button)");
+        Serial.println("[flockyou] Alert dismissed / redraw (button)");
       }
     }
     else if (btn == 4)
@@ -2961,15 +2996,21 @@ void loop()
       // Btn C long: toggle web server
       if (gWebServerMode) {
         fyWebServerStop();
-        gWebServerMode = false;
       } else {
         fyWebServerStart();
-        gWebServerMode = true;
       }
+      // Only report web mode ON if the server really started (a failed WiFi
+      // connect used to leave gWebServerMode=true with scanning paused).
+      gWebServerMode = fyWebServerActive();
+      uiFlushButtonActions();
       Serial.printf("[flockyou] Web server: %s\n", gWebServerMode ? "ON" : "OFF");
     }
   }
 #endif
+
+  // Tracking mode runs in every mode (including web server mode) so a web
+  // session doesn't create a gap in the track.
+  fyTrackTick();
 
   // Web server mode — pause scanning while AP is active
   if (gWebServerMode) {
