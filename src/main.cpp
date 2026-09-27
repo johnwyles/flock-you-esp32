@@ -2661,6 +2661,7 @@ void setup() {
   gHasLoRa = detect_lora(5, 26, 2);
   if (gHasLoRa) dualPrintln("[flockyou] LoRa module (SX127x) detected on SPI");
 
+  fyDiagScanPinActivity(gHasLoRa);
   gHasGPS = fyDiagProbeGps();
   if (gHasGPS) {
     if (gGpsDiag.transport == GPS_TRANSPORT_UART) {

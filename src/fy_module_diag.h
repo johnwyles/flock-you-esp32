@@ -47,6 +47,11 @@ struct FyCc1101Diag {
 extern FyGpsDiag    gGpsDiag;
 extern FyCc1101Diag gCc1101Diag;
 
+// Edge-count every free M-Bus GPIO for 1.5 s (run BEFORE the probes below;
+// they use the result). Summary kept in gDiagPinActivity.
+void fyDiagScanPinActivity(bool loraPresent);
+extern char gDiagPinActivity[420];
+
 // Probe the GPS (UART candidates, then I2C). Blocking: ~1.3 s per silent pin, capped at ~9 s.
 bool fyDiagProbeGps();
 

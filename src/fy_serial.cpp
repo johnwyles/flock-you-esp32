@@ -113,6 +113,7 @@ void fySerialProcess()
     fyDiagPrint(Serial);
 
   } else if (cmd.equalsIgnoreCase("CMD:DIAG")) {
+    fyDiagScanPinActivity(gHasLoRa);
     gHasGPS = fyDiagProbeGps();
     if (gHasGPS) {
       if (gGpsDiag.transport == GPS_TRANSPORT_UART)

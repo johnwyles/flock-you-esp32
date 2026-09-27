@@ -41,6 +41,10 @@ static void appendf(char *buf, size_t len, const char *fmt, ...) {
 const char *fyDiagPinLabel(int8_t gpio) {
   switch (gpio) {
     case 0:  return "G0/MBus24";
+    case 2:  return "G2/MBus19";
+    case 17: return "G17/MBus16";
+    case 26: return "G26/MBus10";
+    case 36: return "G36/MBus4";
     case 3:  return "G3/MBus13";
     case 4:  return "G4(SD CS)";
     case 5:  return "G5/MBus20";
@@ -91,6 +95,72 @@ struct NmeaListen {
     if (idx < sizeof(line) - 1) line[idx++] = c;
   }
 };
+
+// ── Pin activity scan ───────────────────────────────────────────────────────
+// Watches every free M-Bus GPIO for ~1.5 s and counts edges. A GPS streaming
+// NMEA shows up as "data" on its GNSS_TX pin; a powered CC1101 shows up as a
+// ~135 kHz "clock" on GDO0 (its reset default is CLK_XOSC/192). This finds
+// both modules' pins even when the DIP switches are somewhere unexpected.
+
+char gDiagPinActivity[420];
+static uint32_t sActEdges[40];
+static uint8_t  sActLevel[40];
+
+static const int8_t kActPins[] = {0, 2, 5, 12, 13, 15, 16, 17, 25, 26, 34, 35, 36};
+
+void fyDiagScanPinActivity(bool loraPresent) {
+  memset(sActEdges, 0, sizeof(sActEdges));
+  gDiagPinActivity[0] = '\0';
+  uint64_t mask = 0;
+  for (int8_t p : kActPins) {
+    if (p == 5 && loraPresent) continue;  // LoRa CS, driven by us
+    pinMode(p, INPUT);
+    mask |= (1ULL << p);
+  }
+  delay(2);
+  const uint32_t windows = 15, windowMs = 100;
+  uint64_t prev = ((uint64_t)REG_READ(GPIO_IN1_REG) << 32) | REG_READ(GPIO_IN_REG);
+  for (uint32_t w = 0; w < windows; w++) {
+    uint32_t start = millis();
+    while (millis() - start < windowMs) {
+      uint64_t cur = ((uint64_t)REG_READ(GPIO_IN1_REG) << 32) | REG_READ(GPIO_IN_REG);
+      uint64_t diff = (cur ^ prev) & mask;
+      if (diff) {
+        for (int8_t p : kActPins) if (diff & (1ULL << p)) sActEdges[p]++;
+      }
+      prev = cur;
+    }
+    delay(1);  // let the idle task run
+  }
+  for (int8_t p : kActPins) sActLevel[p] = (prev >> p) & 1;
+
+  Serial.print("[diag] ── Pin activity (1.5 s) ─────────────────────────\r\n");
+  for (int8_t p : kActPins) {
+    if (!(mask & (1ULL << p))) continue;
+    uint32_t perSec = sActEdges[p] * 1000 / (windows * windowMs);
+    const char *kind = sActEdges[p] == 0 ? (sActLevel[p] ? "idle HIGH" : "idle LOW")
+                     : perSec > 50000   ? "CLOCK (CC1101 GDO0/GDO2?)"
+                     : sActEdges[p] < 20 ? "a few edges (noise?)"
+                     : "DATA (UART/GPS TX?)";
+    Serial.printf("[diag]   %-10s %8lu edges  %s\r\n", fyDiagPinLabel(p),
+                  (unsigned long)sActEdges[p], kind);
+    if (sActEdges[p] >= 20) {
+      appendf(gDiagPinActivity, sizeof(gDiagPinActivity), "%s:%lu edges %s; ", fyDiagPinLabel(p),
+              (unsigned long)sActEdges[p], perSec > 50000 ? "clock" : "data");
+    }
+  }
+  if (!gDiagPinActivity[0]) strcpy(gDiagPinActivity, "no activity on any free M-Bus GPIO");
+}
+
+// Pins that looked like UART data in the activity scan (not a clock).
+static uint8_t activityDataPins(int8_t *out, uint8_t max) {
+  uint8_t n = 0;
+  for (int8_t p : kActPins) {
+    uint32_t perSec = sActEdges[p] * 1000 / 1500;
+    if (sActEdges[p] >= 20 && perSec <= 50000 && n < max) out[n++] = p;
+  }
+  return n;
+}
 
 // ── GPS ──────────────────────────────────────────────────────────────────────
 
@@ -164,23 +234,33 @@ bool fyDiagProbeGps() {
 
   Serial.println("[diag] ── GPS probe ─────────────────────────────────────");
   gpsI2cScan();
-  Serial.printf("[diag] I2C devices on G21/G22: %s\n", gGpsDiag.i2cDevices);
+  Serial.printf("[diag] I2C devices on G21/G22: %s\r\n", gGpsDiag.i2cDevices);
 
   // UART candidates the GPS v2.1 DIP switch can route GNSS_TX to (G3 is the
   // USB console, so it cannot be probed here — see fy_serial.cpp).
-  static const int8_t kRxPins[] = {16, 13, 35, 34};
+  // Pins with UART-like activity in the scan go first, then the documented
+  // GNSS_TX options. Silent pins cost ~1.3 s each.
+  int8_t kRxPins[12];
+  uint8_t nRx = activityDataPins(kRxPins, 8);
+  const int8_t defaults[] = {16, 13, 35, 34};
+  for (int8_t d : defaults) {
+    bool dup = false;
+    for (uint8_t i = 0; i < nRx; i++) dup |= (kRxPins[i] == d);
+    if (!dup) kRxPins[nRx++] = d;
+  }
   static const uint32_t kBauds[] = {115200, 9600, 38400, 57600};
   bool noisePin = false;
   const uint32_t kUartBudgetMs = 9000;  // cap boot delay if pins are noisy
 
-  for (int8_t pin : kRxPins) {
+  for (uint8_t ri = 0; ri < nRx; ri++) {
+    int8_t pin = kRxPins[ri];
     for (uint8_t b = 0; b < sizeof(kBauds) / sizeof(kBauds[0]); b++) {
       if (millis() - t0 > kUartBudgetMs) {
         appendf(gGpsDiag.tried, sizeof(gGpsDiag.tried), "(time budget hit) ");
         break;
       }
       NmeaListen l = gpsListenUart(pin, kBauds[b], 1300);
-      Serial.printf("[diag]   UART RX=%-10s @%6lu: %4lu bytes, %3lu '$', %3lu valid NMEA\n",
+      Serial.printf("[diag]   UART RX=%-10s @%6lu: %4lu bytes, %3lu '$', %3lu valid NMEA\r\n",
                     fyDiagPinLabel(pin), (unsigned long)kBauds[b], (unsigned long)l.bytes,
                     (unsigned long)l.dollars, (unsigned long)l.valid);
       appendf(gGpsDiag.tried, sizeof(gGpsDiag.tried), "%s@%lu:%luB/%lu; ", fyDiagPinLabel(pin),
@@ -229,14 +309,14 @@ bool fyDiagProbeGps() {
              "that only ONE TX switch is ON. G34/G35 have no pull-up and can pick up noise.");
   } else {
     snprintf(gGpsDiag.hint, sizeof(gGpsDiag.hint),
-             "No NMEA on G16/G13/G35/G34 or I2C. Check the module is seated on the M-Bus, "
-             "a GNSS_TX DIP switch is ON (G16 recommended), and the antenna is attached. "
-             "If NMEA text appears on this console, GNSS_TX is on G3 (USB RX).");
+             "No GPS signal on any free M-Bus pin or I2C. If the pin-activity scan shows no DATA "
+             "pin either, GNSS_TX is on G3 (USB RX, overpowered by the USB chip) or no TX "
+             "switch is ON. Set the GNSS_TX DIP to G16; check antenna/power LED.");;
   }
-  Serial.printf("[diag] GPS: %s  (%lu ms)\n", gGpsDiag.found ? "FOUND" : "NOT FOUND",
+  Serial.printf("[diag] GPS: %s  (%lu ms)\r\n", gGpsDiag.found ? "FOUND" : "NOT FOUND",
                 (unsigned long)gGpsDiag.probeMs);
-  if (gGpsDiag.sample[0]) Serial.printf("[diag] GPS sample: %s\n", gGpsDiag.sample);
-  Serial.printf("[diag] GPS hint: %s\n", gGpsDiag.hint);
+  if (gGpsDiag.sample[0]) Serial.printf("[diag] GPS sample: %s\r\n", gGpsDiag.sample);
+  Serial.printf("[diag] GPS hint: %s\r\n", gGpsDiag.hint);
   return gGpsDiag.found;
 }
 
@@ -298,22 +378,54 @@ bool fyDiagProbeCc1101(bool sdInUse, bool loraPresent) {
   // of floating. Uses the pad pull-up only; does not detach MISO from SPI.
   gpio_pullup_en(GPIO_NUM_19);
 
-  // G25 is the speaker DAC, so it is tried last (only reached if nothing
-  // else answered); main.cpp re-inits the speaker afterwards.
-  int8_t csPins[5] = {15, 0, 12, 25, -1};
-  uint8_t nCs = 4;
+  // Documented CSn options first (G25 = speaker DAC, so last of those), then
+  // off-doc free GPIOs in case the DIP/wiring differs from the docs. Pins that
+  // showed activity in the scan are skipped: something else is driving them.
+  int8_t csPins[12];
+  uint8_t nCs = 0;
+  const int8_t order[] = {15, 0, 12, 25, 2, 26, 17, 5, 16, 13};
+  for (int8_t p : order) {
+    if (p == 5 && loraPresent) continue;
+    if (sActEdges[p] >= 20) continue;
+    csPins[nCs++] = p;
+  }
   if (!sdInUse) csPins[nCs++] = 4;  // legacy firmware default (SD CS on Basic)
 
-  // Deselect every candidate first so only one chip can talk at a time.
+  // Bus check 1: with NO chip-select asserted, MISO must float high (pull-up).
+  // If it reads low, some chip is permanently selected and driving MISO.
+  auto misoIdle = []() -> uint8_t {
+    SPI.beginTransaction(kDiagSpi);
+    uint8_t v = SPI.transfer(0xFF);  // SNOP-ish filler; no CS asserted by us
+    SPI.endTransaction();
+    return v;
+  };
+  uint8_t idleBefore = misoIdle();
+
+  // Deselect every candidate so only one chip can talk at a time.
   for (uint8_t i = 0; i < nCs; i++) { digitalWrite(csPins[i], HIGH); pinMode(csPins[i], OUTPUT); }
   delay(2);
+  uint8_t idleAfter = misoIdle();
+  bool busStuck = idleAfter != 0xFF;
+  Serial.printf("[diag]   MISO with no CS asserted: 0x%02X before, 0x%02X after driving %u "
+                "candidate CSn pins HIGH -> %s\r\n", idleBefore, idleAfter, nCs,
+                busStuck ? "STILL DRIVEN (a chip is stuck selected)" : "released (good)");
+  if (idleBefore != 0xFF && !busStuck) {
+    Serial.print("[diag]   -> driving the candidates HIGH released MISO, so CSn is one of them\r\n");
+  }
+  appendf(gCc1101Diag.tried, sizeof(gCc1101Diag.tried), "idle=%02X/%02X; ", idleBefore, idleAfter);
 
   for (uint8_t i = 0; i < nCs; i++) {
     uint8_t cs = (uint8_t)csPins[i];
     bool ready = false;
+    if (busStuck) {
+      // Can't use CHIP_RDYn; see if this pin going LOW changes the bus at all
+      // (only meaningful if CSn is on one of these pins but also pulled low).
+      appendf(gCc1101Diag.tried, sizeof(gCc1101Diag.tried), "%s:skip(bus stuck); ", fyDiagPinLabel(cs));
+      continue;
+    }
     ccXfer(cs, CC1101_SNOP, 0, false, &ready);  // CSn low -> CHIP_RDYn on MISO
     if (!ready) {
-      Serial.printf("[diag]   CS=%-10s: MISO stayed HIGH (no chip ready)\n", fyDiagPinLabel(cs));
+      Serial.printf("[diag]   CS=%-10s: MISO stayed HIGH (no chip ready)\r\n", fyDiagPinLabel(cs));
       appendf(gCc1101Diag.tried, sizeof(gCc1101Diag.tried), "%s:no-ready; ", fyDiagPinLabel(cs));
       continue;
     }
@@ -329,7 +441,7 @@ bool fyDiagProbeCc1101(bool sdInUse, bool loraPresent) {
     ccWrite(cs, CC1101_SYNC1, 0xD3);
     bool ok = part == 0x00 && rb1 == 0xA5 && rb2 == 0x5A && ver != 0x00 && ver != 0xFF;
     Serial.printf("[diag]   CS=%-10s: ready, PARTNUM=0x%02X VERSION=0x%02X SYNC1=0x%02X "
-                  "rw=0x%02X/0x%02X -> %s\n", fyDiagPinLabel(cs), part, ver, sync1Default,
+                  "rw=0x%02X/0x%02X -> %s\r\n", fyDiagPinLabel(cs), part, ver, sync1Default,
                   rb1, rb2, ok ? "CC1101 PRESENT" : "no match");
     appendf(gCc1101Diag.tried, sizeof(gCc1101Diag.tried), "%s:part=%02X ver=%02X rw=%s; ",
             fyDiagPinLabel(cs), part, ver, (rb1 == 0xA5 && rb2 == 0x5A) ? "ok" : "fail");
@@ -354,7 +466,7 @@ bool fyDiagProbeCc1101(bool sdInUse, bool loraPresent) {
     ccWrite(cs, CC1101_IOCFG0, 0x3F);  // reset defaults
     ccWrite(cs, CC1101_IOCFG2, 0x29);
     gCc1101Diag.marcstate = ccRead(cs, CC1101_MARCSTATE) & 0x1F;
-    Serial.printf("[diag]   GDO0=%s GDO2=%s MARCSTATE=0x%02X\n",
+    Serial.printf("[diag]   GDO0=%s GDO2=%s MARCSTATE=0x%02X\r\n",
                   fyDiagPinLabel(gCc1101Diag.gdo0Pin), fyDiagPinLabel(gCc1101Diag.gdo2Pin),
                   gCc1101Diag.marcstate);
   }
@@ -369,13 +481,18 @@ bool fyDiagProbeCc1101(bool sdInUse, bool loraPresent) {
              fyDiagPinLabel(gCc1101Diag.csPin),
              gCc1101Diag.csPin == 25 ? " (G25 is the speaker DAC; avoid beeps or move CSn to G15)"
              : gCc1101Diag.csPin == 12 ? " (G12 is a boot strapping pin; G15 is safer)" : ".");
+  } else if (busStuck) {
+    snprintf(gCc1101Diag.hint, sizeof(gCc1101Diag.hint),
+             "MISO stays driven with every candidate CSn HIGH (0x0F = CC1101 IDLE status): the "
+             "CC1101 is powered but its CSn is not on any GPIO, so it floats low. Turn ON "
+             "exactly one CSn DIP switch (G15 recommended).");;
   } else {
     snprintf(gCc1101Diag.hint, sizeof(gCc1101Diag.hint),
-             "No CC1101 on CSn G15/G25/G0/G12. Check the module is seated on the M-Bus and "
-             "exactly ONE CSn DIP switch is ON (G15 recommended on Basic).");
+             "No CC1101 answered on any candidate CSn. Check the module is seated on the M-Bus "
+             "and exactly ONE CSn DIP switch is ON (G15 recommended on Basic).");
   }
-  Serial.printf("[diag] CC1101: %s\n", gCc1101Diag.found ? "FOUND" : "NOT FOUND");
-  Serial.printf("[diag] CC1101 hint: %s\n", gCc1101Diag.hint);
+  Serial.printf("[diag] CC1101: %s\r\n", gCc1101Diag.found ? "FOUND" : "NOT FOUND");
+  Serial.printf("[diag] CC1101 hint: %s\r\n", gCc1101Diag.hint);
   return gCc1101Diag.found;
 }
 
@@ -383,26 +500,27 @@ bool fyDiagProbeCc1101(bool sdInUse, bool loraPresent) {
 
 void fyDiagPrint(Print &out) {
   out.println("[diag] ===== Module diagnostics =====");
+  out.printf("[diag] Pin activity: %s\r\n", gDiagPinActivity);
   out.printf("[diag] GPS    : %s", gGpsDiag.probed ? (gGpsDiag.found ? "FOUND" : "NOT FOUND") : "not probed");
   if (gGpsDiag.found && gGpsDiag.transport == GPS_TRANSPORT_UART)
     out.printf(" on UART RX=%s @ %lu", fyDiagPinLabel(gGpsDiag.rxPin), (unsigned long)gGpsDiag.baud);
   if (gGpsDiag.found && gGpsDiag.transport == GPS_TRANSPORT_I2C)
     out.printf(" on I2C 0x%02X", gGpsDiag.i2cAddr);
   out.println();
-  out.printf("[diag]   I2C bus : %s\n", gGpsDiag.i2cDevices);
-  out.printf("[diag]   tried   : %s\n", gGpsDiag.tried);
-  out.printf("[diag]   hint    : %s\n", gGpsDiag.hint);
+  out.printf("[diag]   I2C bus : %s\r\n", gGpsDiag.i2cDevices);
+  out.printf("[diag]   tried   : %s\r\n", gGpsDiag.tried);
+  out.printf("[diag]   hint    : %s\r\n", gGpsDiag.hint);
   out.printf("[diag]   live    : %lu bytes, %lu NMEA ok, %lu bad-cksum, GGA=%lu RMC=%lu GSV=%lu, "
-             "fixQ=%u sats=%u/%u, last %lds ago\n",
+             "fixQ=%u sats=%u/%u, last %lds ago\r\n",
              (unsigned long)gGpsStats.bytes, (unsigned long)gGpsStats.sentences,
              (unsigned long)gGpsStats.checksumErrors, (unsigned long)gGpsStats.gga,
              (unsigned long)gGpsStats.rmc, (unsigned long)gGpsStats.gsv, gGpsStats.fixQuality,
              gCurrentFix.satellites, gGpsStats.satsInView,
              gGpsStats.lastSentenceMs ? (long)((millis() - gGpsStats.lastSentenceMs) / 1000) : -1L);
   if (gCurrentFix.valid)
-    out.printf("[diag]   fix     : %.6f, %.6f alt=%.1fm hdop=%.1f\n", gCurrentFix.lat,
+    out.printf("[diag]   fix     : %.6f, %.6f alt=%.1fm hdop=%.1f\r\n", gCurrentFix.lat,
                gCurrentFix.lon, gCurrentFix.alt, gCurrentFix.hdop);
-  if (gGpsStats.lastSentence[0]) out.printf("[diag]   last    : %s\n", gGpsStats.lastSentence);
+  if (gGpsStats.lastSentence[0]) out.printf("[diag]   last    : %s\r\n", gGpsStats.lastSentence);
 
   out.printf("[diag] CC1101 : %s", gCc1101Diag.probed ? (gCc1101Diag.found ? "FOUND" : "NOT FOUND") : "not probed");
   if (gCc1101Diag.found)
@@ -410,8 +528,8 @@ void fyDiagPrint(Print &out) {
                gCc1101Diag.partnum, gCc1101Diag.version, fyDiagPinLabel(gCc1101Diag.gdo0Pin),
                fyDiagPinLabel(gCc1101Diag.gdo2Pin));
   out.println();
-  out.printf("[diag]   tried   : %s\n", gCc1101Diag.tried);
-  out.printf("[diag]   hint    : %s\n", gCc1101Diag.hint);
+  out.printf("[diag]   tried   : %s\r\n", gCc1101Diag.tried);
+  out.printf("[diag]   hint    : %s\r\n", gCc1101Diag.hint);
   out.println("[diag] ================================");
 }
 
@@ -429,6 +547,9 @@ void fyDiagPrintHtml(Print &out) {
   const char *bad = "<b style='color:#ff5566'>NOT DETECTED</b>";
   out.print("<div class='card'><h3>Modules</h3><table>");
   out.print("<tr><th>Module</th><th>Status</th><th>Details</th></tr>");
+  out.print("<tr><td>M-Bus pin activity</td><td></td><td>");
+  htmlEsc(out, gDiagPinActivity);
+  out.print("</td></tr>");
 
   out.print("<tr><td>GPS (AT6668)</td><td>");
   out.print(gGpsDiag.found ? ok : bad);
@@ -470,7 +591,9 @@ static void jsonStr(char *buf, size_t len, const char *key, const char *val, boo
 
 size_t fyDiagJson(char *buf, size_t len) {
   buf[0] = '\0';
-  appendf(buf, len, "{\"gps\":{\"probed\":%s,\"detected\":%s,\"transport\":\"%s\",\"rx_pin\":%d,"
+  appendf(buf, len, "{");
+  jsonStr(buf, len, "pin_activity", gDiagPinActivity);
+  appendf(buf, len, "\"gps\":{\"probed\":%s,\"detected\":%s,\"transport\":\"%s\",\"rx_pin\":%d,"
           "\"baud\":%lu,\"i2c_addr\":%u,\"probe_ms\":%lu,",
           gGpsDiag.probed ? "true" : "false", gGpsDiag.found ? "true" : "false",
           gGpsDiag.transport == GPS_TRANSPORT_UART ? "uart" : gGpsDiag.transport == GPS_TRANSPORT_I2C ? "i2c" : "none",
