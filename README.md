@@ -9,6 +9,7 @@ ESP32 firmware for M5Stack Basic Development Kit with hardware detection for GPS
 **Optional modules (auto-detected at boot):**
 | Module | Interface | Port | Pins |
 |--------|-----------|------|------|
+| GPS/BDS Unit v1.1 (AT6668, Grove) | UART 115200 | Port A | Unit TX on G21 or G22 (auto-detected); Port A I2C is unavailable while the GPS is plugged in there |
 | GPS Module v2.1 (AT6668 + MAX2659) | UART 115200 | M-Bus (stacked) | GNSS_TX DIP -> **G16** recommended (also probes G13/G35/G34); GPS Unit v1.1 on Port C also works (G16) |
 | LoRa Module 433MHz (SX1278/RA-02) | SPI | Port B | CS=5, RST=26, DIO0=2, SCK=18, MISO=19, MOSI=23 |
 | Module CC1101 | SPI | M-Bus (stacked) | CSn DIP -> **G15** recommended (also probes G0/G12/G25); GDO0/GDO2 DIP -> G35/G5/G13; SCK=18, MISO=19, MOSI=23 |

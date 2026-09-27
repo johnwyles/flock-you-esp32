@@ -42,6 +42,8 @@ const char *fyDiagPinLabel(int8_t gpio) {
   switch (gpio) {
     case 0:  return "G0/MBus24";
     case 2:  return "G2/MBus19";
+    case 21: return "G21/PortA";
+    case 22: return "G22/PortA";
     case 17: return "G17/MBus16";
     case 26: return "G26/MBus10";
     case 36: return "G36/MBus4";
@@ -166,6 +168,12 @@ static uint8_t activityDataPins(int8_t *out, uint8_t max) {
 
 static void gpsI2cScan() {
   gGpsDiag.i2cDevices[0] = '\0';
+  if (gGpsStats.transport == GPS_TRANSPORT_UART &&
+      (gGpsStats.rxPin == 21 || gGpsStats.rxPin == 22)) {
+    // Grove GPS already streaming on Port A: don't drive I2C against its TX.
+    strcpy(gGpsDiag.i2cDevices, "(skipped: Port A in use by GPS UART)");
+    return;
+  }
   Wire.begin(21, 22);
   for (uint8_t a = 0x08; a <= 0x77; a++) {
     Wire.beginTransmission(a);
@@ -240,8 +248,14 @@ bool fyDiagProbeGps() {
   // USB console, so it cannot be probed here — see fy_serial.cpp).
   // Pins with UART-like activity in the scan go first, then the documented
   // GNSS_TX options. Silent pins cost ~1.3 s each.
-  int8_t kRxPins[12];
-  uint8_t nRx = activityDataPins(kRxPins, 8);
+  int8_t kRxPins[14];
+  uint8_t nRx = 0;
+  // GPS/BDS Unit v1.1 (Grove, UART 115200) plugged into Port A: its TX lands
+  // on G21 or G22, which are normally the I2C bus. Nothing else uses I2C on
+  // the Basic after boot, so release Wire and listen there first.
+  kRxPins[nRx++] = 22;
+  kRxPins[nRx++] = 21;
+  nRx += activityDataPins(kRxPins + nRx, 8);
   const int8_t defaults[] = {16, 13, 35, 34};
   for (int8_t d : defaults) {
     bool dup = false;
@@ -252,6 +266,7 @@ bool fyDiagProbeGps() {
   bool noisePin = false;
   const uint32_t kUartBudgetMs = 9000;  // cap boot delay if pins are noisy
 
+  Wire.end();
   for (uint8_t ri = 0; ri < nRx; ri++) {
     int8_t pin = kRxPins[ri];
     for (uint8_t b = 0; b < sizeof(kBauds) / sizeof(kBauds[0]); b++) {
@@ -280,6 +295,9 @@ bool fyDiagProbeGps() {
     if (gGpsDiag.found) break;
   }
   Serial2.end();
+  if (!(gGpsDiag.found && (gGpsDiag.rxPin == 21 || gGpsDiag.rxPin == 22))) {
+    Wire.begin(21, 22);  // Port A not used by the GPS: give it back to I2C
+  }
 
   if (!gGpsDiag.found) {
     const uint8_t addrs[] = {0x10, 0x42};
@@ -297,8 +315,10 @@ bool fyDiagProbeGps() {
   if (gGpsDiag.found) {
     if (gGpsDiag.transport == GPS_TRANSPORT_UART) {
       snprintf(gGpsDiag.hint, sizeof(gGpsDiag.hint),
-               "NMEA stream found on %s @ %lu baud.",
-               fyDiagPinLabel(gGpsDiag.rxPin), (unsigned long)gGpsDiag.baud);
+               "NMEA stream found on %s @ %lu baud%s.",
+               fyDiagPinLabel(gGpsDiag.rxPin), (unsigned long)gGpsDiag.baud,
+               (gGpsDiag.rxPin == 21 || gGpsDiag.rxPin == 22)
+                   ? " (Grove GPS Unit on Port A; Port A I2C is now unavailable)" : "");
     } else {
       snprintf(gGpsDiag.hint, sizeof(gGpsDiag.hint), "NMEA stream found on I2C 0x%02X.",
                gGpsDiag.i2cAddr);
@@ -309,9 +329,9 @@ bool fyDiagProbeGps() {
              "that only ONE TX switch is ON. G34/G35 have no pull-up and can pick up noise.");
   } else {
     snprintf(gGpsDiag.hint, sizeof(gGpsDiag.hint),
-             "No GPS signal on any free M-Bus pin or I2C. If the pin-activity scan shows no DATA "
-             "pin either, GNSS_TX is on G3 (USB RX, overpowered by the USB chip) or no TX "
-             "switch is ON. Set the GNSS_TX DIP to G16; check antenna/power LED.");;
+             "No NMEA on Port A (G21/G22), any free M-Bus pin, or I2C. For the Grove GPS Unit "
+             "v1.1: check the cable is fully seated in Port A (red, left side) and the unit's "
+             "LED is lit. For the M-Bus GPS module: set its GNSS_TX DIP to G16, not G3.");;;
   }
   Serial.printf("[diag] GPS: %s  (%lu ms)\r\n", gGpsDiag.found ? "FOUND" : "NOT FOUND",
                 (unsigned long)gGpsDiag.probeMs);
@@ -483,9 +503,9 @@ bool fyDiagProbeCc1101(bool sdInUse, bool loraPresent) {
              : gCc1101Diag.csPin == 12 ? " (G12 is a boot strapping pin; G15 is safer)" : ".");
   } else if (busStuck) {
     snprintf(gCc1101Diag.hint, sizeof(gCc1101Diag.hint),
-             "MISO stays driven with every candidate CSn HIGH (0x0F = CC1101 IDLE status): the "
-             "CC1101 is powered but its CSn is not on any GPIO, so it floats low. Turn ON "
-             "exactly one CSn DIP switch (G15 recommended).");;
+             "MISO stays driven with every candidate CSn HIGH: a chip (normally the CC1101) is "
+             "powered but its CSn is not on any GPIO, so it floats low. Turn ON exactly one "
+             "CSn DIP switch (G15 recommended).");;;
   } else {
     snprintf(gCc1101Diag.hint, sizeof(gCc1101Diag.hint),
              "No CC1101 answered on any candidate CSn. Check the module is seated on the M-Bus "
