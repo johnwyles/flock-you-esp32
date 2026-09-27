@@ -747,6 +747,13 @@ static void initBLE()
   NimBLEDevice::setPower(ESP_PWR_LVL_P3); // enum-based (1.x only)
 #endif
   g_pBLEScan = NimBLEDevice::getScan();
+  // Store NO scan results: our callback copies everything it needs, so each
+  // device is deleted right after onResult(). With the default (0xFF =
+  // unlimited) the continuous coex scan (duration 0, never completes) kept
+  // every BLE device ever seen in RAM - phones, earbuds, cars with rotating
+  // addresses - draining the heap to ~14 KB, which starved WiFi/TCP (web
+  // pages failing to send, WPA2 handshake timeouts).
+  g_pBLEScan->setMaxResults(0);
 
 #if FY_NIMBLE_V2
   g_pBLEScan->setScanCallbacks(&g_bleCallbacks, false);
@@ -1429,8 +1436,17 @@ static void printHeartbeat()
 {
   if (millis() - lastHeartbeat >= HEARTBEAT_MS)
   {
-    dualPrintf("[flockyou] scanning (ch=%u mode=%s det=%d)\n",
-               currentChannel, channelModeName(), fyDetCount);
+    // Serial only (with heap), screen log keeps the short form
+    Serial.printf("[flockyou] scanning (ch=%u mode=%s det=%d) heap=%u largest=%u\r\n",
+                  currentChannel, channelModeName(), fyDetCount,
+                  (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+#if defined(USE_M5BASIC)
+    {
+      char hb[64];
+      snprintf(hb, sizeof(hb), "[flockyou] scanning (ch=%u det=%d)", currentChannel, fyDetCount);
+      mb_logAdd(hb);
+    }
+#endif
     lastHeartbeat = millis();
     // C5's periodic scanning-screen redraw now happens inside the UI task's
     // own HEARTBEAT_MS gate (ui_task.h) — no direct display call here.
