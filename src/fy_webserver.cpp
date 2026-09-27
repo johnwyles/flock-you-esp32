@@ -76,9 +76,11 @@ static const char *wifiReasonHint(uint8_t r) {
     case WIFI_REASON_NO_AP_FOUND:
       return "network not seen: check the SSID in .env, that it is 2.4 GHz, and signal range";
     case WIFI_REASON_AUTH_FAIL:
+      return "router rejected the login: check the password in .env (WPA3-only networks are not supported)";
     case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
     case WIFI_REASON_HANDSHAKE_TIMEOUT:
-      return "router rejected the login: check the password in .env (WPA3-only networks are not supported)";
+      return "WPA handshake did not complete: wrong password, WPA3-only network, or the router is "
+             "temporarily refusing this device after repeated attempts (wait a minute or restart the router)";
     case WIFI_REASON_BEACON_TIMEOUT:
     case WIFI_REASON_ASSOC_FAIL:
     case WIFI_REASON_CONNECTION_FAIL:
@@ -220,11 +222,10 @@ void fyWebServerStart() {
   delay(100);
 #endif
 
-  // Turn the sniffer OFF before joining a network. Promiscuous mode left on
-  // during WiFi.begin() keeps the radio parked on the last hop channel and
-  // floods the driver with sniffer callbacks while it is trying to scan and
-  // associate, which can stall or fail the connect.
-  esp_wifi_set_promiscuous(false);
+  // NOTE: the sniffer (promiscuous mode) is deliberately left as-is here.
+  // Turning it off before WiFi.begin() was tried and the connect then failed
+  // every time with 4WAY_HANDSHAKE_TIMEOUT / ASSOC_FAIL on a network that
+  // joins in < 1 s with it left on, so the original sequence is kept.
 
   // Use Arduino WiFi library for clean mode transition.
   // WiFi.begin() handles: mode switch, WiFi start, connection, DHCP.
@@ -285,7 +286,7 @@ void fyWebServerStart() {
     Serial.printf("[webserver] hint: %s\r\r\n", wifiReasonHint(gWifiLastReason));
     mb_wifiStatus = "connect failed";
     // Clean up: disconnect WiFi, switch back to NULL mode
-    WiFi.disconnect(true);
+    WiFi.disconnect(false, true);  // keep driver up (BLE coex); forget AP
     WiFi.mode(WIFI_MODE_NULL);
     delay(100);
     // Restore promiscuous mode + channel
@@ -710,7 +711,7 @@ void fyWebServerStop() {
     fySaveSession();
 
   // Switch WiFi back to NULL mode for promiscuous scanning.
-  WiFi.disconnect(true);
+  WiFi.disconnect(false, true);  // keep driver up (BLE coex); forget AP
   WiFi.mode(WIFI_MODE_NULL);
   delay(100);
 
