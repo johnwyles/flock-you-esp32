@@ -85,6 +85,11 @@ static const char *wifiReasonHint(uint8_t r) {
     case WIFI_REASON_ASSOC_FAIL:
     case WIFI_REASON_CONNECTION_FAIL:
       return "weak signal or router busy: move closer to the router and try again";
+    case WIFI_REASON_AUTH_EXPIRE:
+    case WIFI_REASON_ASSOC_LEAVE:
+      return "router is not answering this device's login: it may be temporarily blocking it after "
+             "repeated failed attempts (restart the router or wait a few minutes), MAC filtering "
+             "may be on, or the signal is too weak (see the scan line above)";
     case 0:
       return "no reason reported by the driver: try again; if it repeats, reboot the device";
     default:
@@ -247,6 +252,32 @@ void fyWebServerStart() {
     }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
   }
   gWifiLastReason = 0;
+
+  // Quick scan first: is the network visible, how strong, which channel and
+  // security? Rules out weak signal / WPA3-only / wrong band in one line.
+  {
+    int n = WiFi.scanNetworks(false, false, false, 120);
+    int best = -1;
+    for (int i = 0; i < n; i++) {
+      if (WiFi.SSID(i) == ssid && (best < 0 || WiFi.RSSI(i) > WiFi.RSSI(best))) best = i;
+    }
+    if (best < 0) {
+      Serial.printf("[webserver] scan: \"%s\" NOT seen (%d networks visible) - check SSID / 2.4 GHz / range\r\n",
+                    ssid, n);
+    } else {
+      wifi_auth_mode_t am = WiFi.encryptionType(best);
+      const char *sec = am == WIFI_AUTH_OPEN ? "open" : am == WIFI_AUTH_WEP ? "WEP"
+                      : am == WIFI_AUTH_WPA_PSK ? "WPA" : am == WIFI_AUTH_WPA2_PSK ? "WPA2"
+                      : am == WIFI_AUTH_WPA_WPA2_PSK ? "WPA/WPA2" : am == WIFI_AUTH_WPA2_WPA3_PSK ? "WPA2/WPA3"
+                      : am == WIFI_AUTH_WPA3_PSK ? "WPA3-only (NOT supported)" : "enterprise/other";
+      int rssi = WiFi.RSSI(best);
+      Serial.printf("[webserver] scan: \"%s\" ch %d, RSSI %d dBm (%s), security %s, BSSID %s\r\n",
+                    ssid, WiFi.channel(best), rssi,
+                    rssi > -60 ? "good" : rssi > -72 ? "ok" : rssi > -80 ? "weak" : "very weak",
+                    sec, WiFi.BSSIDstr(best).c_str());
+    }
+    WiFi.scanDelete();
+  }
 
   // Connect as a station to the target WiFi network
   Serial.printf("[webserver] Connecting to \"%s\"...\r\n", ssid);
