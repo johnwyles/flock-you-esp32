@@ -3013,12 +3013,20 @@ void loop()
   fyTrackTick();
 
   // Web server mode — pause scanning while AP is active
+  // Pause promiscuous sniffing ONCE on entering web mode. This used to be
+  // called on every loop pass (thousands of times a second); each call is a
+  // request to the WiFi driver task, competing with the TCP traffic that
+  // serves the web pages.
+  static bool promiscPausedForWeb = false;
   if (gWebServerMode) {
+    if (!promiscPausedForWeb) {
+      esp_wifi_set_promiscuous(false);
+      promiscPausedForWeb = true;
+    }
     fyWebServerTick();
-    // Pause promiscuous and scanning while webserver is active
-    esp_wifi_set_promiscuous(false);
     return;
   }
+  promiscPausedForWeb = false;
 
   // Sub-GHz scan (non-blocking, ~300ms full band scan)
   if (gHasCC1101) {

@@ -40,6 +40,75 @@ char gWebServerIP[24] = "";
 
 WebServer gWebServer(80);
 
+// ── Buffered HTML response writer ─────────────────────────────────────────
+// Every HTML page goes through this: one proper header + <head> (doctype,
+// charset, viewport, no-cache, shared CSS), then the body written in full
+// ~1.4 KB TCP chunks instead of dozens of tiny client.print() calls. It
+// counts bytes and write failures and logs one line per request, e.g.
+//   [web] GET /table?name=track-0001.json -> 200, 18342 B in 412 ms
+//   [web] GET /files -> WRITE FAILED after 2920 B (client gone?) in 5031 ms
+// Pages are served one at a time on the loop task, so one static buffer is
+// shared instead of putting 1.4 KB on the (8 KB) loop-task stack per request.
+static uint8_t sHtmlBuf[1400];
+
+class HtmlOut : public Print {
+ public:
+  explicit HtmlOut(WiFiClient &c) : _c(c), _start(millis()) {}
+  void begin(const char *title, const char *css) {
+    _c.setNoDelay(true);
+    print("HTTP/1.1 200 OK\r\n"
+          "Content-Type: text/html; charset=utf-8\r\n"
+          "Cache-Control: no-store\r\n"
+          "Connection: close\r\n"
+          "Access-Control-Allow-Origin: *\r\n\r\n");
+    print("<!DOCTYPE html><html><head><meta charset='utf-8'>"
+          "<meta name='viewport' content='width=device-width,initial-scale=1'><title>");
+    print(title);
+    print("</title>");
+    print(css);
+    print("</head><body>");
+  }
+  size_t write(uint8_t b) override { return write(&b, 1); }
+  size_t write(const uint8_t *buf, size_t len) override {
+    size_t done = 0;
+    while (done < len) {
+      size_t n = min(len - done, sizeof(sHtmlBuf) - _used);
+      memcpy(_buf + _used, buf + done, n);
+      _used += n;
+      done += n;
+      if (_used == sizeof(sHtmlBuf)) flushBuf();
+    }
+    return len;
+  }
+  void flushBuf() {
+    if (!_used) return;
+    if (!_failed) {
+      size_t w = _c.write(_buf, _used);
+      if (w != _used) _failed = true;
+      else _total += w;
+    }
+    _used = 0;
+  }
+  void finish(const char *what) {
+    flushBuf();
+    _c.stop();
+    if (_failed)
+      Serial.printf("[web] GET %s -> WRITE FAILED after %u B (client gone?) in %lu ms\r\n", what,
+                    (unsigned)_total, (unsigned long)(millis() - _start));
+    else
+      Serial.printf("[web] GET %s -> 200, %u B in %lu ms\r\n", what, (unsigned)_total,
+                    (unsigned long)(millis() - _start));
+  }
+
+ private:
+  WiFiClient &_c;
+  unsigned long _start;
+  uint8_t *const _buf = sHtmlBuf;
+  size_t _used = 0;
+  size_t _total = 0;
+  bool _failed = false;
+};
+
 // (Re)build the file list: "fname|source|..." where source is "SD" or
 // "SPIF". Called at web start AND when /files is opened (throttled to once
 // per 3 s), so files created while the web server is up (new track files,
@@ -190,26 +259,22 @@ void fyWebServerStart() {
     "</style>";
 
   // List all available files ordered by date
+  // Register routes once. fyWebServerStart() runs on every web toggle and
+  // used to append a duplicate set of handlers each time.
+  static bool routesRegistered = false;
+  if (!routesRegistered) {
+  routesRegistered = true;
     gWebServer.on("/files", []() {
       snprintf(mb_webLog, sizeof(mb_webLog), "GET /files from %s", gWebServer.client().remoteIP().toString().c_str());
       mb_webLogMs = millis();
 
       // Get the WiFi client directly for streaming
       WiFiClient client = gWebServer.client();
-
-      // Send HTTP headers
-      client.print(
-        "HTTP/1.1 200 OK\r\n"
-        "Content-Type: text/html\r\n"
-        "Connection: close\r\n"
-        "Access-Control-Allow-Origin: *\r\n"
-        "\r\n"
-      );
+      HtmlOut out(client);
+      out.begin("flock-you files", pageCSS);
 
       // Stream HTML response in chunks
-      client.print("<html><head>");
-      client.print(pageCSS);
-      client.print("</head><body><div class='container'><h1>flock-you files</h1><div class='card'>");
+      out.print("<div class='container'><h1>flock-you files</h1><div class='card'>");
       bool found = false;
 
       if (millis() - gFileCacheMs > 3000) fyRefreshFileCache();
@@ -253,17 +318,17 @@ void fyWebServerStart() {
           String srcLabel = sources[i];
           if (srcLabel == "SD") srcLabel = "SD Card";
           else if (srcLabel == "SPIF") srcLabel = "SPIFFS";
-          client.print("<div class='file-item'><span class='fname'>");
-          client.print(names[i]);
-          client.print(" <span class='status-bar'>(");
-          client.print(srcLabel);
-          client.print(")</span></span><div>");
-          client.print("<a class='btn' href='/file?name=");
-          client.print(names[i]);
-          client.print("'>JSON</a>");
-          client.print("<a class='btn' href='/table?name=");
-          client.print(names[i]);
-          client.print("'>Table</a></div></div>");
+          out.print("<div class='file-item'><span class='fname'>");
+          out.print(names[i]);
+          out.print(" <span class='status-bar'>(");
+          out.print(srcLabel);
+          out.print(")</span></span><div>");
+          out.print("<a class='btn' href='/file?name=");
+          out.print(names[i]);
+          out.print("'>JSON</a>");
+          out.print("<a class='btn' href='/table?name=");
+          out.print(names[i]);
+          out.print("'>Table</a></div></div>");
           found = true;
           entryIdx++;
         }
@@ -298,22 +363,22 @@ void fyWebServerStart() {
           for (int i = 0; i < count; i++) {
             String urlName = names[i];
             if (urlName.startsWith("/")) urlName = urlName.substring(1);
-            client.print("<div class='file-item'><span class='fname'>");
-            client.print(names[i]);
-            client.print("</span><div>");
-            client.print("<a class='btn' href='/file?name=");
-            client.print(urlName);
-            client.print("'>JSON</a>");
-            client.print("<a class='btn' href='/table?name=");
-            client.print(urlName);
-            client.print("'>Table</a></div></div>");
+            out.print("<div class='file-item'><span class='fname'>");
+            out.print(names[i]);
+            out.print("</span><div>");
+            out.print("<a class='btn' href='/file?name=");
+            out.print(urlName);
+            out.print("'>JSON</a>");
+            out.print("<a class='btn' href='/table?name=");
+            out.print(urlName);
+            out.print("'>Table</a></div></div>");
             found = true;
           }
         }
       }
-      if (!found) client.print("<p>(none yet)</p>");
-      client.print("</div></div></body></html>");
-      client.stop();
+      if (!found) out.print("<p>(none yet)</p>");
+      out.print("</div></div></body></html>");
+      out.finish("/files");
     });
 
   // Serve specific file by name — check both SD and SPIFFS
@@ -411,31 +476,21 @@ void fyWebServerStart() {
 
     // Get the WiFi client directly for streaming
     WiFiClient client = gWebServer.client();
-
-    // Send HTTP headers
-    client.print(
-      "HTTP/1.1 200 OK\r\n"
-      "Content-Type: text/html\r\n"
-      "Connection: close\r\n"
-      "Access-Control-Allow-Origin: *\r\n"
-      "\r\n"
-    );
-    // Stream HTML response in chunks to avoid timeout
-    client.print("<html><head><title>Table: ");
-    client.print(name);
-    client.print("</title>");
-    client.print(pageCSS);  // include shared CSS
-    client.print("</head><body><div class='container'>");
-    client.print("<h1>Detections: ");
-    client.print(name);
-    client.print("</h1>");
-    client.print("<p><a class='btn btn-back' href='/files'>Back to files</a></p>");
-    client.flush();
+    HtmlOut out(client);
+    String title = String("Table: ") + name;
+    out.begin(title.c_str(), pageCSS);
+    String what = String("/table?name=") + name;
+    out.print("<div class='container'>");
+    out.print(name.indexOf("track-") >= 0 ? "<h1>GPS track: "
+              : name.indexOf("waypoints-") >= 0 ? "<h1>Waypoints: " : "<h1>Detections: ");
+    out.print(name);
+    out.print("</h1>");
+    out.print("<p><a class='btn btn-back' href='/files'>Back to files</a></p>");
 
     if (body.length() == 0) {
-      client.print("<div class='card'><p>File not found.</p></div>");
-      client.print("</div></body></html>");
-      client.stop();
+      out.print("<div class='card'><p>File not found.</p></div>");
+      out.print("</div></body></html>");
+      out.finish(what.c_str());
       return;
     }
 
@@ -467,9 +522,9 @@ void fyWebServerStart() {
       if ((rowsTotal & 15) == 0) yield();
     }
     if (rowsTotal == 0) {
-      client.print("<div class='card'><p>No records in this file yet.</p></div>");
-      client.print("</div></body></html>");
-      client.stop();
+      out.print("<div class='card'><p>No records in this file yet.</p></div>");
+      out.print("</div></body></html>");
+      out.finish(what.c_str());
       return;
     }
     auto esc = [](const std::string &in) {
@@ -485,7 +540,7 @@ void fyWebServerStart() {
     String row = "<table><thead><tr>";
     for (int i = 0; i < nCols; i++) row += "<th>" + esc(cols[i]) + "</th>";
     row += "</tr></thead><tbody>";
-    client.print(row);
+    out.print(row);
 
     int dataRows = 0;
     pos = start;
@@ -499,15 +554,15 @@ void fyWebServerStart() {
       row = "<tr>";
       for (int i = 0; i < nCols; i++) row += "<td>" + esc(vals[i]) + "</td>";
       row += "</tr>";
-      client.print(row);
+      out.print(row);
       dataRows++;
       pos = e0;
       yield();
     }
-    client.print("</tbody></table></div>");
-    client.print("<div class='status-bar'>" + String(dataRows) + " rows loaded</div>");
-    client.print("</div></body></html>");
-    client.stop();
+    out.print("</tbody></table></div>");
+    out.print("<div class='status-bar'>" + String(dataRows) + " rows loaded</div>");
+    out.print("</div></body></html>");
+    out.finish(what.c_str());
   });
 
   // Root status endpoint
@@ -517,31 +572,30 @@ void fyWebServerStart() {
 
     // Get the WiFi client directly for streaming
     WiFiClient client = gWebServer.client();
-
-    // Send HTTP headers
-    client.print(
-      "HTTP/1.1 200 OK\r\n"
-      "Content-Type: text/html\r\n"
-      "Connection: close\r\n"
-      "Access-Control-Allow-Origin: *\r\n"
-      "\r\n"
-    );
+    HtmlOut out(client);
+    out.begin("flock-you", pageCSS);
 
     // Stream HTML response in chunks to avoid String allocation issues
-    client.print("<html><head>");
-    client.print(pageCSS);
-    client.print("</head><body><div class='container'>");
-    client.print("<h1>flock-you</h1>");
-    client.print("<div class='card'><p>Detections: ");
-    client.print(fyDetCount);
-    client.print("</p>");
-    client.print("<p><a class='btn' href='/files'>Browse files</a></p></div>");
-    fyDiagPrintHtml(client);
-    client.print("<div class='status-bar'>Web server running on <strong>");
-    client.print(gWebServerIP);
-    client.print(":80</strong></div>");
-    client.print("</div></body></html>");
-    client.stop();
+    out.print("<div class='container'>");
+    out.print("<h1>flock-you</h1>");
+    out.print("<div class='card'><p>Detections: ");
+    out.print(fyDetCount);
+    out.print("</p>");
+    out.print("<p><a class='btn' href='/files'>Browse files</a></p></div>");
+    fyDiagPrintHtml(out);
+    out.print("<div class='status-bar'>Web server running on <strong>");
+    out.print(gWebServerIP);
+    out.print(":80</strong></div>");
+    out.print("</div></body></html>");
+    out.finish("/");
+  });
+
+  // Browsers ask for /favicon.ico on every page; answer immediately instead of
+  // falling through to the library's default handling.
+  gWebServer.on("/favicon.ico", []() { gWebServer.send(204); });
+  gWebServer.onNotFound([]() {
+    Serial.printf("[web] GET %s -> 404\r\n", gWebServer.uri().c_str());
+    gWebServer.send(404, "text/plain", "not found");
   });
 
   // Optional-module diagnostics (GPS / CC1101) as JSON
@@ -551,6 +605,8 @@ void fyWebServerStart() {
     gWebServer.sendHeader("Access-Control-Allow-Origin", "*");
     gWebServer.send(200, "application/json", json);
   });
+
+  }  // routesRegistered
 
   fyRefreshFileCache();
 

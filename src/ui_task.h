@@ -57,6 +57,8 @@
 extern bool gWebServerMode;
 extern bool mb_showWebLog;
 extern void m5basicDrawWebLog();
+extern unsigned long mb_webLogMs;
+extern const char *mb_wifiStatus;
 
 // ── Continuous "scanning status" snapshot ─────────────────────────────────
 // Overwritten every loop() iteration by uiPublishScan(); the UI task reads
@@ -350,7 +352,19 @@ static void uiTaskFn(void* pv) {
         if (gWebServerMode) {
             // Show web server status screen instead of scanning
             if (mb_showWebLog) {
-                m5basicDrawWebLog();
+                // Repaint only when the web log/status changed (or once a
+                // second). A full repaint every 50 ms kept the SPI bus -
+                // shared by the LCD and the SD card - busy, slowing every
+                // file read the web pages do.
+                static unsigned long lastWebLogMs = 0, lastWebDraw = 0;
+                static const char *lastStatus = nullptr;
+                if (!lastWsMode || mb_webLogMs != lastWebLogMs ||
+                    mb_wifiStatus != lastStatus || now - lastWebDraw >= 1000) {
+                    m5basicDrawWebLog();
+                    lastWebLogMs = mb_webLogMs;
+                    lastStatus = mb_wifiStatus;
+                    lastWebDraw = now;
+                }
             } else {
                 m5basicScanning(scan.channel, scan.modeName, scan.detCount, now,
                                 scan.spiffsOk, (int)FY_OUI_HIGH_COUNT, (int)FY_OUI_MFR_COUNT);
