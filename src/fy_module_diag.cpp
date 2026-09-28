@@ -221,7 +221,7 @@ static bool gpsProbeI2c(uint8_t addr) {
 static NmeaListen gpsListenUart(int8_t pin, uint32_t baud, uint32_t windowMs) {
   NmeaListen l;
   Serial2.end();
-  Serial2.setRxBufferSize(1024);
+  Serial2.setRxBufferSize(768);
   Serial2.begin(baud, SERIAL_8N1, pin, -1);
   delay(5);
   while (Serial2.available()) Serial2.read();  // drop junk from pin switch

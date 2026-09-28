@@ -836,18 +836,37 @@ static void bleScanTick(bool & /*promiscPaused*/)
   }
 }
 
-// Stop BLE coex scan (called from fy_webserver.cpp before WiFi shutdown)
+// Stop BLE and RELEASE the whole BLE stack (called from fy_webserver.cpp
+// when the web server starts). With BLE + WiFi STA + lwIP on a no-PSRAM
+// ESP32 the heap was down to ~11 KB, so pages failed to send and large pages
+// aborted on allocation failure. Scanning is paused in web mode anyway, so
+// the BLE host + controller are shut down to hand their RAM to WiFi/TCP, and
+// re-created by bleScanStartCoex() when the web server stops.
 void bleScanStop()
 {
   if (!g_pBLEScan)
     return;
   if (g_pBLEScan->isScanning())
     g_pBLEScan->stop();
+  delay(50);
+  uint32_t before = ESP.getFreeHeap();
+  NimBLEDevice::deinit(true);  // also deletes the scan object
+  g_pBLEScan = nullptr;
+#if defined(BLE_SELF_TEST) && BLE_SELF_TEST
+  g_pBLEAdv = nullptr;
+#endif
+  Serial.printf("[flockyou] BLE stack released for web mode: heap %u -> %u B\r\n",
+                (unsigned)before, (unsigned)ESP.getFreeHeap());
 }
 
 // Restart BLE coex scan (called from fy_webserver.cpp after WiFi restart)
 void bleScanStartCoex()
 {
+  if (!g_pBLEScan)
+  {
+    initBLE();  // re-create the stack released by bleScanStop()
+    Serial.printf("[flockyou] BLE stack re-initialised, heap %u B\r\n", (unsigned)ESP.getFreeHeap());
+  }
   if (!g_pBLEScan)
     return;
   if (g_pBLEScan->isScanning())

@@ -71,7 +71,7 @@ void gpsInit(TwoWire &bus, uint8_t sda, uint8_t scl, uint8_t addr) {
 
 void gpsInitUart(HardwareSerial &port, int8_t rxPin, int8_t txPin, uint32_t baud) {
   port.end();
-  port.setRxBufferSize(1024);  // a 1 Hz AT6668 burst is ~600 bytes
+  port.setRxBufferSize(768);  // a 1 Hz AT6668 burst is ~600 bytes
   port.begin(baud, SERIAL_8N1, rxPin, txPin);
   gGpsUart = &port;
   gGpsWire = nullptr;

@@ -176,6 +176,45 @@ class HtmlOut : public Print {
   bool _failed = false;
 };
 
+// Stream a file to the client in 512-byte chunks (no full copy in RAM).
+static void streamFile(fs::File &f, const char *what) {
+  WiFiClient &c = gWebServer.client();
+  unsigned long t0 = millis();
+  size_t size = f.size();
+  String h = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " +
+             String((unsigned)size) +
+             "\r\nCache-Control: no-store\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n";
+  bool ok = fyHttpWriteAll(c, (const uint8_t *)h.c_str(), h.length()) == h.length();
+  uint8_t buf[512];
+  size_t sent = 0;
+  while (ok && f.available()) {
+    int n = f.read(buf, sizeof(buf));
+    if (n <= 0) break;
+    ok = fyHttpWriteAll(c, buf, n) == (size_t)n;
+    if (ok) sent += n;
+    yield();
+  }
+  f.close();
+  c.stop();
+  Serial.printf("[web] GET %s -> %s, %u/%u B in %lu ms\r\n", what, ok ? "200" : "WRITE FAILED",
+                (unsigned)sent, (unsigned)size, (unsigned long)(millis() - t0));
+}
+
+// Shared body of /file and /json: SD first, then SPIFFS.
+static void serveRawFile() {
+  String name = gWebServer.arg("name");
+  String what = String(gWebServer.uri()) + "?name=" + name;
+  String sdPath = name;
+  if (!sdPath.startsWith("/")) sdPath = String("/") + sdPath;
+  fs::File f = SD.open(sdPath.c_str(), "r");
+  if (!f && fySpiffsReady) f = SPIFFS.open(sdPath.c_str(), "r");
+  if (!f) {
+    gWebServer.send(404, "application/json", "{\"error\":\"not found\"}");
+    return;
+  }
+  streamFile(f, what.c_str());
+}
+
 // (Re)build the file list: "fname|source|..." where source is "SD" or
 // "SPIF". Called at web start AND when /files is opened (throttled to once
 // per 3 s), so files created while the web server is up (new track files,
@@ -516,64 +555,14 @@ void fyWebServerStart() {
 
   // Serve specific file by name — check both SD and SPIFFS
   gWebServer.on("/file", []() {
-    String name = gWebServer.arg("name");
-    snprintf(mb_webLog, sizeof(mb_webLog), "GET /file?name=%s from %s", name.c_str(), gWebServer.client().remoteIP().toString().c_str());
+    snprintf(mb_webLog, sizeof(mb_webLog), "GET /file?name=%s", gWebServer.arg("name").c_str());
     mb_webLogMs = millis();
-
-    // Try SD card first
-    {
-      String sdPath = name;
-      if (!sdPath.startsWith("/")) sdPath = String("/") + sdPath;
-      File f = SD.open(sdPath.c_str(), "r");
-      if (f) {
-        String body = f.readString();
-        f.close();
-        yield();
-        gWebServer.send(200, "application/json", body);
-        return;
-      }
-    }
-    // Fall back to SPIFFS
-    if (fySpiffsReady) {
-      File f = SPIFFS.open(name.c_str(), "r");
-      if (f) {
-        String body = f.readString();
-        f.close();
-        yield();
-        gWebServer.send(200, "application/json", body);
-        return;
-      }
-    }
-    gWebServer.send(404, "application/json", "{\"error\":\"not found\"}");
+    serveRawFile();
   });
 
   // Serve raw JSON file — same as /file, kept for compatibility
   gWebServer.on("/json", []() {
-    String name = gWebServer.arg("name");
-    // Try SD card first
-    {
-      String sdPath = name;
-      if (!sdPath.startsWith("/")) sdPath = String("/") + sdPath;
-      File f = SD.open(sdPath.c_str(), "r");
-      if (f) {
-        String body = f.readString();
-        f.close();
-        yield();
-        gWebServer.send(200, "application/json", body);
-        return;
-      }
-    }
-    if (fySpiffsReady) {
-      File f = SPIFFS.open(name.c_str(), "r");
-      if (f) {
-        String body = f.readString();
-        f.close();
-        yield();
-        gWebServer.send(200, "application/json", body);
-        return;
-      }
-    }
-    gWebServer.send(404, "application/json", "{\"error\":\"not found\"}");
+    serveRawFile();
   });
 
   // Table view — parse JSON on server and render as HTML table
@@ -586,25 +575,32 @@ void fyWebServerStart() {
     snprintf(mb_webLog, sizeof(mb_webLog), "GET /table?name=%s from %s", name.c_str(), gWebServer.client().remoteIP().toString().c_str());
     mb_webLogMs = millis();
 
-    // Read the file (from SD or SPIFFS)
+    // Read the file (from SD or SPIFFS). The table view needs the whole file
+    // in RAM (plus parsing overhead), so refuse files that won't fit instead
+    // of letting an allocation failure abort() the firmware.
     String body = "";
+    bool tooBig = false;
+    size_t fileSize = 0;
+    auto loadFile = [&](File f) {
+      if (!f) return;
+      fileSize = f.size();
+      size_t budget = ESP.getMaxAllocHeap() / 3;  // leave room for parsing + TCP
+      if (fileSize > budget) {
+        tooBig = true;
+      } else {
+        body.reserve(fileSize + 1);
+        body = f.readString();
+      }
+      f.close();
+      yield();
+    };
     {
       String sdPath = name;
       if (!sdPath.startsWith("/")) sdPath = String("/") + sdPath;
-      File f = SD.open(sdPath.c_str(), "r");
-      if (f) {
-        body = f.readString();
-        f.close();
-        yield();
-      }
+      loadFile(SD.open(sdPath.c_str(), "r"));
     }
-    if (body.length() == 0 && fySpiffsReady) {
-      File f = SPIFFS.open(name.c_str(), "r");
-      if (f) {
-        body = f.readString();
-        f.close();
-        yield();
-      }
+    if (!tooBig && body.length() == 0 && fySpiffsReady) {
+      loadFile(SPIFFS.open(name.c_str(), "r"));
     }
 
     // Get the WiFi client directly for streaming
@@ -620,6 +616,15 @@ void fyWebServerStart() {
     out.print("</h1>");
     out.print("<p><a class='btn btn-back' href='/files'>Back to files</a></p>");
 
+    if (tooBig) {
+      out.printf("<div class='card'><p>This file is %u bytes, too large to render as a table with "
+                 "the memory available (%u bytes). Use the <a href='/file?name=%s'>raw JSON</a> "
+                 "link instead.</p></div>", (unsigned)fileSize, (unsigned)ESP.getMaxAllocHeap(),
+                 name.c_str());
+      out.print("</div></body></html>");
+      out.finish(what.c_str());
+      return;
+    }
     if (body.length() == 0) {
       out.print("<div class='card'><p>File not found.</p></div>");
       out.print("</div></body></html>");
@@ -733,10 +738,18 @@ void fyWebServerStart() {
 
   // Optional-module diagnostics (GPS / CC1101) as JSON
   gWebServer.on("/modules", []() {
-    static char json[3072];
-    fyDiagJson(json, sizeof(json));
+    // Heap, not a permanent 3 KB static buffer (RAM is tight on this board)
+    const size_t cap = 3072;
+    char *json = (char *)malloc(cap);
+    if (!json) {
+      gWebServer.send(503, "text/plain", "out of memory");
+      return;
+    }
+    fyDiagJson(json, cap);
+    String body(json);
+    free(json);
     gWebServer.sendHeader("Access-Control-Allow-Origin", "*");
-    gWebServer.send(200, "application/json", json);
+    gWebServer.send(200, "application/json", body);
   });
 
   }  // routesRegistered
